@@ -241,11 +241,16 @@ async function play(url: string) {
     if (HlsLib.isSupported()) {
       hls = new HlsLib({ maxBufferLength: 60 });
       hls.on(HlsLib.Events.ERROR, (_e, data) => {
-        if (data.fatal) {
-          if (data.type === HlsLib.ErrorTypes.NETWORK_ERROR) errMsg.value = '视频加载失败（网络错误或资源已失效）';
-          else if (data.type === HlsLib.ErrorTypes.MEDIA_ERROR) hls?.recoverMediaError();
-          else errMsg.value = '视频播放失败';
+        if (!data.fatal) return;
+        if (data.type === HlsLib.ErrorTypes.MEDIA_ERROR) {
+          hls?.recoverMediaError();
+          return;
         }
+        if (data.type === HlsLib.ErrorTypes.NETWORK_ERROR) {
+          void retryOnce('视频加载失败（网络错误或资源已失效）');
+          return;
+        }
+        errMsg.value = '视频播放失败';
       });
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -256,6 +261,7 @@ async function play(url: string) {
 }
 
 async function init(noCache = false) {
+  if (!noCache) autoRetried = false;
   loading.value = true;
   errMsg.value = '';
   iframeMode.value = false;
@@ -324,9 +330,21 @@ function onEnded() {
   if (setting.data.player.autoNext && next.value) go(next.value);
 }
 
+/** 资源站 m3u8 的 sign 会过期 → 第一次失败自动重新解析一次（带 noCache） */
+let autoRetried = false;
+async function retryOnce(reason: string) {
+  if (autoRetried) {
+    errMsg.value = reason;
+    return;
+  }
+  autoRetried = true;
+  message.info('资源可能已过期，正在重新解析…');
+  await init(true);
+}
+
 function onVideoError() {
   if (hls || iframeMode.value || loading.value) return;
-  errMsg.value = '视频无法播放（格式不支持或资源已失效）';
+  void retryOnce('视频无法播放（格式不支持或资源已失效）');
 }
 
 function go(c?: ChapterItem) {

@@ -36,6 +36,8 @@ import {
 type Handler = (args: any) => Promise<any> | any;
 
 const HOUR = 60 * 60 * 1000;
+/** 视频播放地址有效期短：资源站的 m3u8 带 sign，过期后上游会 403 */
+const VIDEO_TTL = 10 * 60 * 1000;
 const cache = new MemoryCache();
 const md5 = (s: string) => createHash('md5').update(String(s)).digest('hex');
 
@@ -368,7 +370,7 @@ export const routes: Record<string, Handler> = {
     // 缓存里存“原始地址”，转发签名在返回时再生成，避免缓存里带着过期签名
     const raw: any = await cached(
       key,
-      rule.contentType === ContentType.VIDEO ? HOUR : 24 * HOUR,
+      rule.contentType === ContentType.VIDEO ? VIDEO_TTL : 24 * HOUR,
       async () => {
         let content = await new RuleManager(rule).getContent(chapterPath);
         // 有些站点的阅读页必须跑 JS 才能过校验：用本机 Chrome 抓一次再抽图

@@ -3,6 +3,17 @@ import axios from 'axios';
 import type Router from '@koa/router';
 import { rewriteM3u8 } from './live-parser';
 import { sign } from './secret';
+import { pushLog } from './logs';
+
+/** 日志里只留 CDN 域名 + 路径，避免把整条签名地址刷进缓冲 */
+function finalUrlForLog(u: string) {
+  try {
+    const x = new URL(u);
+    return `${x.host}${x.pathname}`;
+  } catch {
+    return u.slice(0, 80);
+  }
+}
 
 /**
  * 通用媒体转发
@@ -109,6 +120,12 @@ export function registerMediaProxy(router: Router) {
       ctx.status = 502;
       ctx.body = `upstream error: ${err?.message}`;
       return;
+    }
+
+    // 上游 4xx（签名过期 / 防盗链）时把状态带出去，客户端据此自动重新解析
+    if (res.status >= 400) {
+      ctx.set('x-upstream-status', String(res.status));
+      pushLog('warn', 'media/proxy', `upstream ${res.status} ${finalUrlForLog(u)}`);
     }
 
     const upstream = res.data as Readable;
