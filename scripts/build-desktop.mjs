@@ -44,7 +44,12 @@ const wanted = args.includes('all')
     ? args
     : [process.platform === 'darwin' ? current : process.platform === 'win32' ? 'win-x64' : 'linux-x64'];
 
-const sh = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { cwd: root, stdio: 'inherit', ...opts });
+/** Windows 上 npm/npx 是 .cmd，execFileSync 直接调用会失败 */
+const sh = (cmd, argv, opts = {}) => {
+  const isWin = process.platform === 'win32';
+  const exe = isWin && ['npm', 'npx'].includes(cmd) ? `${cmd}.cmd` : cmd;
+  return execFileSync(exe, argv, { cwd: root, stdio: 'inherit', shell: isWin, ...opts });
+};
 
 async function download(url, file) {
   if (fs.existsSync(file)) return;
@@ -62,7 +67,8 @@ async function nodeBinaryFor(platform) {
   const hostMatches =
     (platform === 'mac-arm64' && process.platform === 'darwin' && process.arch === 'arm64') ||
     (platform === 'mac-x64' && process.platform === 'darwin' && process.arch === 'x64') ||
-    (platform === 'linux-x64' && process.platform === 'linux' && process.arch === 'x64');
+    (platform === 'linux-x64' && process.platform === 'linux' && process.arch === 'x64') ||
+    (platform === 'win-x64' && process.platform === 'win32' && process.arch === 'x64');
 
   if (hostMatches) return local;
 
@@ -74,8 +80,13 @@ async function nodeBinaryFor(platform) {
   const archive = path.join(cacheRoot, `${cfg.nodeDir}.${ext}`);
   await download(`https://nodejs.org/dist/v${NODE_VERSION}/${cfg.nodeDir}.${ext}`, archive);
   fs.mkdirSync(path.join(cacheRoot, cfg.nodeDir), { recursive: true });
-  if (ext === 'zip') sh('unzip', ['-qo', archive, '-d', cacheRoot]);
-  else sh('tar', ['-xJf', archive, '-C', cacheRoot]);
+  // Windows 10+ / macOS 自带的 bsdtar 都能解 zip，GNU tar 解 tar.xz
+  try {
+    sh('tar', ['-xf', archive, '-C', cacheRoot]);
+  } catch {
+    if (ext === 'zip') sh('unzip', ['-qo', archive, '-d', cacheRoot]);
+    else throw new Error(`解压失败：${archive}`);
+  }
   if (!fs.existsSync(binPath)) throw new Error(`解压后没找到 ${binPath}`);
   return binPath;
 }
@@ -91,10 +102,14 @@ async function buildOne(platform) {
   fs.chmodSync(out, 0o755);
 
   if (platform.startsWith('mac')) {
-    try {
-      sh('codesign', ['--remove-signature', out], { stdio: 'ignore' });
-    } catch {
-      /* 未签名的副本会报错，忽略 */
+    if (process.platform !== 'darwin') {
+      console.warn('  ! 非 macOS 上无法签名 mac 二进制，产物在 mac 上会被 Gatekeeper 拦（建议在 mac runner 上打）');
+    } else {
+      try {
+        sh('codesign', ['--remove-signature', out], { stdio: 'ignore' });
+      } catch {
+        /* 未签名的副本会报错，忽略 */
+      }
     }
   }
 
@@ -109,7 +124,9 @@ async function buildOne(platform) {
   ];
   sh('npx', ['--yes', ...postjectArgs], { stdio: 'inherit' });
 
-  if (platform.startsWith('mac')) sh('codesign', ['--sign', '-', '--force', out], { stdio: 'ignore' });
+  if (platform.startsWith('mac') && process.platform === 'darwin') {
+    sh('codesign', ['--sign', '-', '--force', out], { stdio: 'ignore' });
+  }
 
   const size = (fs.statSync(out).size / 1024 / 1024).toFixed(1);
   console.log(`  ✓ ${path.relative(root, out)}  ${size} MB`);
