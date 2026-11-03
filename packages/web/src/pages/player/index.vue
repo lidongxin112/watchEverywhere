@@ -35,6 +35,19 @@
           @error="onVideoError"
         ></video>
 
+        <!-- 需要用户手势才能播放时显示 -->
+        <div v-if="needTap" class="player__tap" @click="startPlayback">
+          <PlayCircleOutlined class="player__tap-icon" />
+          <div class="player__tap-text">点击播放</div>
+        </div>
+        <div v-else-if="buffering || stalled" class="player__buffering">
+          <a-spin />
+          <div v-if="stalled" class="player__stall">
+            还没出画面：可能是这条线路失效，试试选集里的其他线路
+            <a-button size="small" style="margin-left: 8px" @click="init(true)">重新解析</a-button>
+          </div>
+        </div>
+
         <!-- 弹幕层 -->
         <div v-show="danmakuOn && danmakuVisible.length" class="player__danmaku">
           <span
@@ -126,6 +139,10 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+const needTap = ref(false);
+const buffering = ref(false);
+const stalled = ref(false);
+let stallTimer: number | null = null;
 
 // ---------------- 弹幕 ----------------
 const danmakuOn = ref(localStorage.getItem('we-danmaku') !== '0');
@@ -304,6 +321,56 @@ async function init(noCache = false) {
   play(url);
 }
 
+/** 播放迟迟不进画面：记日志 + 给提示，避免“黑屏 0:00”没有任何线索 */
+function watchStall() {
+  if (stallTimer) clearTimeout(stallTimer);
+  stalled.value = false;
+  stallTimer = window.setTimeout(() => {
+    const v = videoRef.value;
+    if (!v || errMsg.value) return;
+    if (v.readyState >= 2 && v.currentTime > 0.3) return;
+    stalled.value = true;
+    void postClientLog({
+      level: 'error',
+      scope: 'stalled',
+      message: '播放 8 秒仍未出画面',
+      extra: {
+        playUrl: playUrl.value,
+        readyState: v.readyState,
+        networkState: v.networkState,
+        duration: String(v.duration),
+        paused: v.paused,
+        error: v.error ? `${v.error.code}/${v.error.message}` : '',
+        chapterPath,
+        ruleId
+      }
+    });
+  }, 8000);
+}
+
+/** 浏览器拦截带声音的自动播放时：先静音播，仍失败就提示点击 */
+async function startPlayback(mutedRetry = false) {
+  const video = videoRef.value;
+  if (!video) return;
+  try {
+    await video.play();
+    needTap.value = false;
+  } catch (e: any) {
+    if (!mutedRetry && e?.name === 'NotAllowedError') {
+      video.muted = true;
+      try {
+        await video.play();
+        needTap.value = false;
+        message.info('已静音自动播放（点音量图标可恢复声音）');
+        return;
+      } catch {
+        /* 仍然不行 */
+      }
+    }
+    needTap.value = true;
+  }
+}
+
 function onLoaded() {
   const video = videoRef.value!;
   video.playbackRate = rate.value;
@@ -314,10 +381,19 @@ function onLoaded() {
     message.info(`已从上次的位置 ${formatTime(t)} 继续播放`);
   }
   resumed = true;
+  void startPlayback();
+  watchStall();
 }
 
 let lastSave = 0;
+function updateBuffering() {
+  const v = videoRef.value;
+  buffering.value = !!v && !v.paused && v.readyState < 3;
+  if (v && v.currentTime > 0.5) stalled.value = false;
+}
+
 function onTimeUpdate() {
+  updateBuffering();
   const now = Date.now();
   if (now - lastSave < 5000) return;
   lastSave = now;
@@ -427,6 +503,7 @@ onBeforeUnmount(() => {
   saveProgress();
   destroyHls();
   if (danmakuTimer) clearTimeout(danmakuTimer);
+  if (stallTimer) clearTimeout(stallTimer);
   window.removeEventListener('keydown', onKey);
 });
 </script>
@@ -458,6 +535,44 @@ onBeforeUnmount(() => {
   height: 100%;
   border: none;
   background: #000;
+}
+.player__tap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  z-index: 5;
+}
+.player__tap-icon {
+  font-size: 56px;
+}
+.player__tap-text {
+  font-size: 14px;
+}
+.player__buffering {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 4;
+}
+.player__stall {
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 6px 10px;
+  border-radius: 6px;
+  pointer-events: auto;
 }
 .player__danmaku {
   position: absolute;
