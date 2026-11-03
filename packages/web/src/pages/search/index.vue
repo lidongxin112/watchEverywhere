@@ -17,6 +17,7 @@
     </div>
 
     <div class="search__status we-muted">
+      <a-switch v-if="searched && !loading && groups.length" v-model:checked="merged" size="small" checked-children="合并同名" un-checked-children="按源分组" style="margin-right: 8px" />
       <template v-if="loading">
         <a-button size="small" @click="cancel">取消</a-button>
         <a-spin size="small" />
@@ -33,7 +34,27 @@
 
     <div v-if="searched && !loading && !groups.length" class="we-center"><a-empty description="没有搜到结果" /></div>
 
-    <div v-for="g in groups" :key="g.rule.id" class="search__group-block">
+    <!-- 合并同名：一行一个作品，展开选源 -->
+    <div v-if="merged" class="search__merged">
+      <div v-for="m in mergedGroups" :key="m.key" class="search__merged-item">
+        <MediaCard
+          :item="{ ...m.primary.item, ruleId: m.primary.rule.id, contentType: m.primary.rule.contentType }"
+          @open="() => openFrom(m)"
+        />
+        <div class="search__merged-sources">
+          <a-tag
+            v-for="s in m.sources"
+            :key="s.rule.id"
+            :color="s.item.url === m.primary.item.url ? 'blue' : ''"
+            @click="openFromSource(s)"
+          >
+            {{ s.rule.name }}
+          </a-tag>
+        </div>
+      </div>
+    </div>
+
+    <div v-for="g in groups" v-show="!merged" :key="g.rule.id" class="search__group-block">
       <div class="we-section-title">
         {{ g.rule.name }}
         <span class="we-muted" style="font-weight: 400; font-size: 12px">{{ g.list.length }} 条</span>
@@ -75,6 +96,38 @@ const searched = ref(false);
 const total = ref(0);
 const done = ref(0);
 const groups = ref<{ rule: Rule; list: ResourceItem[] }[]>([]);
+const merged = ref(localStorage.getItem('we-search-merged') === '1');
+
+/** 同名作品合并（去掉空格/标点后比较） */
+const mergedGroups = computed(() => {
+  const norm = (s: string) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[\s\-_:：·,，.。!！?？"'“”‘’()（）\[\]【】]/g, '');
+  const map = new Map<string, { key: string; name: string; sources: { rule: Rule; item: ResourceItem }[] }>();
+  for (const g of groups.value) {
+    for (const item of g.list) {
+      const key = norm(item.name);
+      if (!key) continue;
+      const hit = map.get(key);
+      if (hit) hit.sources.push({ rule: g.rule, item });
+      else map.set(key, { key, name: item.name, sources: [{ rule: g.rule, item }] });
+    }
+  }
+  return [...map.values()]
+    .map((m) => ({ ...m, primary: m.sources[0] }))
+    .sort((a, b) => b.sources.length - a.sources.length);
+});
+
+function openFrom(m: { sources: { rule: Rule; item: ResourceItem }[] }) {
+  openFromSource(m.sources[0]);
+}
+
+function openFromSource(s: { rule: Rule; item: ResourceItem }) {
+  open({ ...s.item, ruleId: s.rule.id }, s.rule.id);
+}
+
+watch(merged, (v) => localStorage.setItem('we-search-merged', v ? '1' : '0'));
 const failed = ref<string[]>([]);
 let controller: AbortController | null = null;
 let lastToken = '';
@@ -172,6 +225,30 @@ onActivated(init);
   gap: 8px;
   min-height: 28px;
   font-size: 13px;
+}
+.search__merged {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--we-card-width) + 20px), 1fr));
+  gap: 16px 12px;
+  padding: 4px 0 16px;
+}
+.search__merged-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.search__merged-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.search__merged-sources .ant-tag {
+  cursor: pointer;
+  margin: 0;
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .search__row {
   display: flex;
