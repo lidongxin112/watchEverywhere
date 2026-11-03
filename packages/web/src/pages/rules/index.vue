@@ -9,6 +9,7 @@
             <a-menu-item @click="fileRef?.click()">从文件导入</a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="cmsOpen = true">从资源站添加（苹果CMS）</a-menu-item>
+            <a-menu-item @click="openSubscriptions">管理规则订阅</a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="editRule('')">新建规则</a-menu-item>
           </a-menu>
@@ -115,6 +116,41 @@
       </a-form>
     </a-modal>
 
+    <!-- 规则订阅 -->
+    <a-drawer v-model:open="subOpen" title="规则订阅" placement="right" :width="520">
+      <a-form layout="vertical">
+        <a-form-item label="订阅地址" extra="指向一份规则 JSON / eso:// 串，或返回它们的地址；保存后可一键检查">
+          <a-input v-model:value="subForm.url" placeholder="https://example.com/rules.json" />
+        </a-form-item>
+        <a-form-item label="名称（可选）">
+          <a-input v-model:value="subForm.name" placeholder="留空用域名" />
+        </a-form-item>
+        <a-space>
+          <a-checkbox v-model:checked="subForm.autoUpdate">每小时自动检查</a-checkbox>
+          <a-button type="primary" :loading="subSaving" @click="saveSubscription">添加</a-button>
+          <a-button :loading="subChecking" @click="checkAllSubscriptions">全部检查</a-button>
+        </a-space>
+      </a-form>
+
+      <a-divider>已有订阅</a-divider>
+      <a-empty v-if="!subscriptions.length" description="还没有订阅" />
+      <div v-for="s in subscriptions" :key="s.id" class="sub-item">
+        <div class="sub-item__main">
+          <div class="sub-item__name we-ellipsis">{{ s.name }}</div>
+          <div class="sub-item__url we-muted we-ellipsis">{{ s.url }}</div>
+          <div class="sub-item__meta we-muted">
+            {{ s.lastCheck ? '上次检查 ' + dayjs(s.lastCheck).format('MM-DD HH:mm') : '未检查' }}
+            <span v-if="s.lastCount"> · {{ s.lastCount }} 条规则</span>
+            <span v-if="s.lastError" class="sub-item__err"> · {{ s.lastError }}</span>
+          </div>
+        </div>
+        <a-space>
+          <a-button size="small" :loading="subCheckingId === s.id" @click="checkSubscription(s.id)">检查</a-button>
+          <a-button size="small" danger @click="removeSubscription(s.id)">删除</a-button>
+        </a-space>
+      </div>
+    </a-drawer>
+
     <!-- 编辑 -->
     <a-drawer v-model:open="editOpen" :title="editId ? '编辑规则' : '新建规则'" placement="right" width="min(960px, 100%)" destroy-on-close>
       <RuleInfo v-if="editOpen" :rule-id="editId" @close="onEditClose" />
@@ -127,7 +163,8 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { message, Modal } from 'ant-design-vue';
 import { PlusOutlined, DownOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue';
 import { CONTENT_TYPES, contentTypeLabel, type Rule } from '@/constants';
-import { batchUpdateRules, delRules, importCMS, importRules, pingRule } from '@/api';
+import dayjs from 'dayjs';
+import { batchUpdateRules, checkSubscription as apiCheckSubscription, checkAllSubscriptions as apiCheckAll, delRules, deleteSubscription, getSubscriptions, importCMS, importRules, pingRule, saveSubscription as apiSaveSubscription, type RuleSubscription } from '@/api';
 import { useRulesStore } from '@/stores/rules';
 import RuleInfo from '@/pages/rule-info/index.vue';
 
@@ -142,6 +179,62 @@ const pinging = ref(false);
 const fileRef = ref<HTMLInputElement>();
 
 const importOpen = ref(false);
+
+// ---------------- 规则订阅 ----------------
+const subOpen = ref(false);
+const subSaving = ref(false);
+const subChecking = ref(false);
+const subCheckingId = ref('');
+const subscriptions = ref<RuleSubscription[]>([]);
+const subForm = reactive({ url: '', name: '', autoUpdate: true });
+
+async function loadSubscriptions() {
+  const res = await getSubscriptions();
+  if (res.code === 0) subscriptions.value = res.data || [];
+}
+function openSubscriptions() {
+  subOpen.value = true;
+  loadSubscriptions();
+}
+async function saveSubscription() {
+  if (!subForm.url.trim()) return message.warning('先填订阅地址');
+  subSaving.value = true;
+  const res = await apiSaveSubscription({ url: subForm.url.trim(), name: subForm.name.trim(), autoUpdate: subForm.autoUpdate });
+  subSaving.value = false;
+  if (res.code !== 0) return message.error(res.msg || '保存失败');
+  subForm.url = '';
+  subForm.name = '';
+  await loadSubscriptions();
+  if (res.data?.id) await checkSubscription(res.data.id);
+}
+async function checkSubscription(id: string) {
+  subCheckingId.value = id;
+  const res = await apiCheckSubscription(id);
+  subCheckingId.value = '';
+  if (res.code !== 0) return message.error(res.msg || '检查失败');
+  if (res.data?.error) message.error(res.data.error);
+  else message.success(`新增 ${res.data?.added || 0} 条，更新 ${res.data?.updated || 0} 条`);
+  await loadSubscriptions();
+  await refresh();
+}
+async function checkAllSubscriptions() {
+  subChecking.value = true;
+  const res = await apiCheckAll();
+  subChecking.value = false;
+  if (res.code !== 0) return message.error(res.msg || '检查失败');
+  const added = (res.data || []).reduce((n, r) => n + (r.added || 0), 0);
+  const updated = (res.data || []).reduce((n, r) => n + (r.updated || 0), 0);
+  message.success(`检查 ${res.data?.length || 0} 个订阅，新增 ${added} 条，更新 ${updated} 条`);
+  await loadSubscriptions();
+  await refresh();
+}
+async function removeSubscription(id: string) {
+  const res = await deleteSubscription(id);
+  if (res.code === 0) {
+    await loadSubscriptions();
+    message.success('已删除');
+  }
+}
 const importText = ref('');
 const importing = ref(false);
 const cmsOpen = ref(false);
@@ -343,6 +436,29 @@ onMounted(refresh);
 
 <style scoped>
 .rules :deep(.timeout) {
+  color: #ff4d4f;
+}
+
+.sub-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.25));
+}
+.sub-item__main {
+  flex: 1;
+  min-width: 0;
+}
+.sub-item__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.sub-item__url,
+.sub-item__meta {
+  font-size: 12px;
+}
+.sub-item__err {
   color: #ff4d4f;
 }
 </style>

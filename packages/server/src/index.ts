@@ -11,6 +11,7 @@ import { DATA_DIR } from './store';
 import { flushAll } from './db';
 import { ensureBuiltinSource, liveSourcesStore, registerLiveProxy } from './live';
 import { registerMediaProxy } from './media';
+import { startSubscriptionScheduler } from './subscription';
 import { startIptv, stopIptv } from './iptv';
 
 /** 打包成单文件可执行程序后 __dirname 由 CJS 提供；开发态用 import.meta.url */
@@ -49,6 +50,7 @@ export function createServer() {
   // 直播播放代理（GET，返回清单 / 视频流）
   registerLiveProxy(router);
   registerMediaProxy(router);
+  startSubscriptionScheduler();
 
   app.use(cors());
   app.use(bodyParser({ jsonLimit: '20mb' }));

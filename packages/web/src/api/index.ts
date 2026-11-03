@@ -216,3 +216,32 @@ export interface DanmakuItem {
 }
 
 export const getDanmaku = (cid: string) => request<{ cid: string; count: number; list: DanmakuItem[] }>('danmaku/list', { cid }, false);
+
+// ======================= 规则订阅 =======================
+
+export interface RuleSubscription {
+  id: string;
+  name: string;
+  url: string;
+  autoUpdate: boolean;
+  intervalHours: number;
+  lastCheck?: number;
+  lastCount?: number;
+  lastError?: string;
+  createTime: number;
+}
+
+export interface SubscriptionCheckResult {
+  id: string;
+  name: string;
+  added: number;
+  updated: number;
+  total: number;
+  error?: string;
+}
+
+export const getSubscriptions = () => request<RuleSubscription[]>('subscription/list');
+export const saveSubscription = (data: Partial<RuleSubscription>) => request<RuleSubscription>('subscription/save', data);
+export const deleteSubscription = (id: string) => request('subscription/remove', { id });
+export const checkSubscription = (id: string) => request<SubscriptionCheckResult>('subscription/check', { id });
+export const checkAllSubscriptions = () => request<SubscriptionCheckResult[]>('subscription/check-all');

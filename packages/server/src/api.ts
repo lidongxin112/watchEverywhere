@@ -16,6 +16,7 @@ import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
 import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
+import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { liveRoutes } from './live';
 import {
@@ -140,6 +141,44 @@ export const routes: Record<string, Handler> = {
     rulesStore.save();
     cache.clear();
     return true;
+  },
+
+  // ======================= 规则订阅 =======================
+  'subscription/list': () => subscriptionStore.value,
+
+  'subscription/save': ({ id, ...rest }) => {
+    const list = subscriptionStore.value;
+    if (id) {
+      const idx = list.findIndex((s) => s.id === id);
+      if (idx > -1) {
+        list[idx] = { ...list[idx], ...rest };
+        subscriptionStore.save();
+        return list[idx];
+      }
+    }
+    const row = createSubscription(rest);
+    list.push(row);
+    subscriptionStore.save();
+    return row;
+  },
+
+  'subscription/remove': ({ id }) => {
+    subscriptionStore.set(subscriptionStore.value.filter((s) => s.id !== id));
+    return true;
+  },
+
+  'subscription/check': async ({ id }) => {
+    const sub = subscriptionStore.value.find((s) => s.id === id);
+    if (!sub) throw new Error('订阅不存在');
+    const res = await checkSubscription(sub);
+    cache.clear();
+    return res;
+  },
+
+  'subscription/check-all': async () => {
+    const res = await checkAll(true);
+    cache.clear();
+    return res;
   },
 
   /** 导入：eso:// / JSON / 网络地址 */
