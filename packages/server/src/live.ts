@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import zlib from 'node:zlib';
 import type { Readable } from 'node:stream';
 import axios from 'axios';
@@ -41,8 +41,8 @@ export const liveSourcesStore = new JsonStore<LiveSource[]>('live-sources', []);
 const cache = new MemoryCache();
 
 // ---------------- 代理签名：只有服务端发出的地址才能被代理，避免变成开放代理 ----------------
-const SECRET = randomBytes(24);
-export const signUrl = (u: string) => createHmac('sha256', SECRET).update(u).digest('hex').slice(0, 24);
+import { sign } from './secret';
+export const signUrl = (u: string) => sign(u);
 export const proxyUrl = (u: string) => `/api/live/proxy?u=${encodeURIComponent(u)}&s=${signUrl(u)}`;
 
 /** iPTV 就绪后确保存在「内置 iPTV」直播源，并同步最新的端口 / 访问密码 */

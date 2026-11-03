@@ -1,8 +1,8 @@
-import { createHmac, randomBytes } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import axios from 'axios';
 import type Router from '@koa/router';
 import { rewriteM3u8 } from './live-parser';
+import { sign } from './secret';
 
 /**
  * 通用媒体转发
@@ -15,8 +15,6 @@ import { rewriteM3u8 } from './live-parser';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-const SECRET = randomBytes(24);
 
 /** 需要伪造 Referer 的 CDN：域名关键字 -> Referer */
 const REFERER_RULES: [RegExp, string][] = [
@@ -55,13 +53,13 @@ export function needsMediaProxy(mediaUrl: string, ruleHost = ''): boolean {
   return true;
 }
 
-const sign = (u: string, r: string) =>
-  createHmac('sha256', SECRET).update(u + '|' + r).digest('hex').slice(0, 24);
+/** 签名基于持久化密钥，进程重启后旧链接依然可用 */
+const signPair = (u: string, r: string) => sign(u + '|' + r);
 
 /** 生成同源转发地址；返回相对路径，前端直接用即可 */
 export function mediaProxyUrl(mediaUrl: string, referer = ''): string {
   const r = referer || mediaReferer(mediaUrl);
-  return `/api/media/proxy?u=${encodeURIComponent(mediaUrl)}&r=${encodeURIComponent(r)}&s=${sign(mediaUrl, r)}`;
+  return `/api/media/proxy?u=${encodeURIComponent(mediaUrl)}&r=${encodeURIComponent(r)}&s=${signPair(mediaUrl, r)}`;
 }
 
 function readAll(stream: Readable, limit = 8 * 1024 * 1024): Promise<string> {
@@ -85,7 +83,7 @@ export function registerMediaProxy(router: Router) {
     const u = String(ctx.query.u || '');
     const r = String(ctx.query.r || '');
     const s = String(ctx.query.s || '');
-    if (!/^https?:\/\//i.test(u) || s !== sign(u, r)) {
+    if (!/^https?:\/\//i.test(u) || s !== signPair(u, r)) {
       ctx.status = 403;
       ctx.body = 'forbidden';
       return;

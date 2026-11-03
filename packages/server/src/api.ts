@@ -296,7 +296,8 @@ export const routes: Record<string, Handler> = {
   'rule-manager/content': async ({ ruleId, chapterPath, noCache }) => {
     const rule = getRule(ruleId);
     const key = `content@${ruleId}@${md5(chapterPath)}`;
-    return cached(
+    // 缓存里存“原始地址”，转发签名在返回时再生成，避免缓存里带着过期签名
+    const raw: any = await cached(
       key,
       rule.contentType === ContentType.VIDEO ? HOUR : 24 * HOUR,
       async () => {
@@ -314,8 +315,6 @@ export const routes: Record<string, Handler> = {
           }
         }
         if (!content.length) throw new Error('获取内容失败');
-        const playable = (url: string) =>
-          needsMediaProxy(url, rule.host) ? mediaProxyUrl(url, mediaReferer(url, rule.host)) : url;
         // 哔哩哔哩的章节地址里带 cid（ep|cid 或 cid|bvid），顺手把弹幕 id 带出去
         const cidMatch = /(?:^|\|)(\d{5,})(?:\||$)/.exec(String(chapterPath || ''));
         const danmakuCid = /bilibili\.com$/i.test(new URL(rule.host).hostname) && cidMatch ? cidMatch[1] : '';
@@ -323,14 +322,20 @@ export const routes: Record<string, Handler> = {
           contentType: rule.contentType,
           contentDecoder: !!rule.contentDecoder,
           danmakuCid,
-          content:
-            rule.contentType === ContentType.VIDEO || rule.contentType === ContentType.AUDIO
-              ? playable(content[0])
-              : content
+          content
         };
       },
       !!noCache
     );
+
+    const playable = (url: string) =>
+      needsMediaProxy(url, rule.host) ? mediaProxyUrl(url, mediaReferer(url, rule.host)) : url;
+    const isMedia = rule.contentType === ContentType.VIDEO || rule.contentType === ContentType.AUDIO;
+    const first = Array.isArray(raw.content) ? raw.content[0] : raw.content;
+    return {
+      ...raw,
+      content: isMedia ? playable(String(first || '')) : raw.content
+    };
   },
 
   'rule-manager/content-by-rule': async ({ rule, chapterPath }) => {
