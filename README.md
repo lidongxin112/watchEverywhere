@@ -205,6 +205,20 @@ WE_NOTICE_URL=https://你的域名/watchEverywhere/notices.json
 - 接口：`POST /api/app/info`、`POST /api/app/update-check {force}`、`POST /api/app/notices`
 - 版本号取 `WE_VERSION`，默认根 `package.json` 的 version；发版时改版本号重新打包、上传新包、更新 `latest.json` 即可，老客户端下次启动就会提示
 
+一键发版（GitHub Actions，打 tag 即发）：
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` 会跑测试 → 打 mac-arm64 / mac-x64 / win-x64 → 生成 `latest.json`（带 size + sha256）→ 传 Release。
+本地也可以手动生成清单：
+
+```bash
+node scripts/make-manifest.mjs 0.2.0 "本次更新说明"
+WE_RELEASE_BASE=https://github.com/你/repo/releases/download/v0.2.0 node scripts/make-manifest.mjs 0.2.0
+```
+
 暂不做「静默自动替换二进制」（涉及签名/权限，容易被系统拦），现在是「提示 + 一键下载」；如果要真·自动更新，可以在下载完成后把新文件写到 `~/.watch-everywhere/updates/`，下次启动由启动器替换，我可以再补。
 
 ## 与 any-reader 的差异
