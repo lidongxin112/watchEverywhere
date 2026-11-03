@@ -145,7 +145,6 @@ async function main() {
     '--platform=node',
     '--format=cjs',
     '--target=node20',
-    `--define:__APP_VERSION__=${JSON.stringify(version)}`,
     `--outfile=${path.join(appDir, 'entry.cjs')}`,
     '--log-level=error'
   ]);
@@ -163,9 +162,15 @@ async function main() {
   fs.writeFileSync(path.join(appDir, 'public-assets.json'), JSON.stringify(assets));
   console.log(`  ${Object.keys(assets).length} 个静态文件已内联`);
 
+  fs.writeFileSync(path.join(appDir, 'version.json'), JSON.stringify({ version }));
   fs.writeFileSync(
     path.join(appDir, 'sea-entry.cjs'),
-    "globalThis.__WE_ASSETS__ = require('./public-assets.json');\nrequire('./entry.cjs');\n"
+    [
+      "globalThis.__WE_VERSION__ = require('./version.json').version;",
+      "globalThis.__WE_ASSETS__ = require('./public-assets.json');",
+      "require('./entry.cjs');",
+      ''
+    ].join('\n')
   );
   sh('npx', [
     'esbuild',

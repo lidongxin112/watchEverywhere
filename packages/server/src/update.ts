@@ -23,7 +23,8 @@ import path from 'node:path';
 declare const __APP_VERSION__: string | undefined;
 
 function readVersion(): string {
-  if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) return __APP_VERSION__;
+  const injected = (globalThis as any).__WE_VERSION__;
+  if (typeof injected === 'string' && injected) return injected;
   if (process.env.WE_VERSION) return process.env.WE_VERSION;
   try {
     // 开发态：从仓库根 package.json 读
