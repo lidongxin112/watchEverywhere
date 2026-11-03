@@ -1,0 +1,429 @@
+import { createHash } from 'node:crypto';
+import axios from 'axios';
+import {
+  ContentType,
+  RuleManager,
+  cmsUrlToRule,
+  createRule,
+  fetch,
+  parseRequest,
+  text2rules,
+  AnalyzerManager,
+  type Rule
+} from '@watch-everywhere/core';
+import { MemoryCache } from './store';
+import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
+import { extractImages, needsBrowser } from './extract-images';
+import { browserFetch } from './browser';
+import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
+import { liveRoutes } from './live';
+import {
+  chapterHistoryStore,
+  configStore,
+  favoritesStore,
+  historyStore,
+  rulesStore,
+  sameResource,
+  type ResourceItem
+} from './db';
+
+type Handler = (args: any) => Promise<any> | any;
+
+const HOUR = 60 * 60 * 1000;
+const cache = new MemoryCache();
+const md5 = (s: string) => createHash('md5').update(String(s)).digest('hex');
+
+function getRule(ruleId: string): Rule {
+  const rule = rulesStore.value.find((e) => e.id === ruleId);
+  if (!rule) throw new Error('规则不存在');
+  return rule;
+}
+
+async function cached<T>(key: string, ttl: number, fn: () => Promise<T>, noCache = false): Promise<T> {
+  if (!noCache) {
+    const hit = cache.get<T>(key);
+    if (hit !== undefined) return hit;
+  }
+  const value = await fn();
+  const empty = Array.isArray(value) ? value.length === 0 : !value;
+  if (!empty) cache.set(key, value, ttl);
+  return value;
+}
+
+function saveRule(input: Partial<Rule>): Rule {
+  const list = rulesStore.value;
+  const idx = input.id ? list.findIndex((e) => e.id === input.id) : -1;
+  const { extra: _extra, ...rest } = input as any;
+  if (!rest.id) delete rest.id;
+  let rule: Rule;
+  if (idx > -1) {
+    rule = { ...list[idx], ...rest, modifiedTime: Date.now() };
+    list[idx] = rule;
+  } else {
+    rule = createRule(rest);
+    list.push(rule);
+  }
+  rulesStore.save();
+  // 规则改了，相关缓存作废
+  cache.clear();
+  return rule;
+}
+
+function upsertResource(store: { value: ResourceItem[]; save: () => void }, data: Partial<ResourceItem>, limit = 0) {
+  const now = Date.now();
+  const list = store.value;
+  const idx = list.findIndex((e) => sameResource(e, data));
+  const rule = rulesStore.value.find((e) => e.id === data.ruleId);
+  const row: ResourceItem = {
+    ruleId: String(data.ruleId || ''),
+    url: String(data.url || ''),
+    name: String(data.name || ''),
+    cover: data.cover || '',
+    author: data.author || '',
+    chapter: data.chapter || '',
+    description: data.description || '',
+    contentType: data.contentType ?? rule?.contentType,
+    createTime: idx > -1 ? list[idx].createTime : now,
+    updateTime: now
+  };
+  if (idx > -1) list.splice(idx, 1);
+  list.unshift(row);
+  if (limit && list.length > limit) list.length = limit;
+  store.save();
+  return row;
+}
+
+/**
+ * 接口表：路径 => 处理函数（均为 POST，参数为 JSON body）
+ * 路径命名与 any-reader 保持一致，方便对照。
+ */
+export const routes: Record<string, Handler> = {
+  // ======================= 版本 / 更新 =======================
+  'app/info': () => ({
+    version: APP_VERSION,
+    platform: detectPlatform(),
+    standalone: isStandalone(),
+    node: process.version
+  }),
+
+  'app/update-check': ({ force } = {}) => checkUpdate(!!force),
+
+  'app/notices': () => fetchNotices(),
+
+  // ======================= 规则 =======================
+  'resource-rule/list': () =>
+    [...rulesStore.value].sort((a, b) => (b.sort || 0) - (a.sort || 0)).map((r) => ({ ...r, extra: r.extra || {} })),
+
+  'resource-rule/find-by-id': ({ id }) => getRule(id),
+
+  'resource-rule/create': (rule) => saveRule(rule),
+
+  'resource-rule/save': (rule) => saveRule(rule),
+
+  'resource-rule/remove-by-id': ({ id }) => {
+    const ids: string[] = Array.isArray(id) ? id : [id];
+    rulesStore.set(rulesStore.value.filter((e) => !ids.includes(e.id)));
+    cache.clear();
+    return ids.length;
+  },
+
+  'resource-rule/batch-update': ({ ids, rule }) => {
+    for (const r of rulesStore.value) if (ids.includes(r.id)) Object.assign(r, rule, { modifiedTime: Date.now() });
+    rulesStore.save();
+    cache.clear();
+    return true;
+  },
+
+  /** 导入：eso:// / JSON / 网络地址 */
+  'resource-rule/import': async ({ url }) => {
+    const rules = await text2rules(String(url || ''));
+    for (const rule of rules) saveRule(rule);
+    return rules.length;
+  },
+
+  /** 从苹果 CMS 资源站接口生成视频规则 */
+  'resource-rule/import-cms': async ({ url, name }) => {
+    if (!/^https?:\/\//.test(url || '')) throw new Error('请输入正确的资源站接口地址');
+    const rule = await cmsUrlToRule(url, name);
+    saveRule(rule);
+    return 1;
+  },
+
+  'resource-rule/ping': async ({ id }) => {
+    const rule = getRule(id);
+    const start = Date.now();
+    let ping = -1;
+    try {
+      await axios.get(rule.host, { timeout: 5000, validateStatus: () => true, maxRedirects: 3 });
+      ping = Date.now() - start;
+    } catch {
+      ping = -1;
+    }
+    rule.extra = { ...(rule.extra || {}), ping };
+    rulesStore.save();
+    return { ping };
+  },
+
+  // ======================= 解析 =======================
+  'rule-manager/search-by-rule-id': async ({ ruleId, keyword, page = 1 }) => {
+    const rule = getRule(ruleId);
+    return cached(`search@${ruleId}@${page}@${md5(keyword)}`, 5 * 60 * 1000, () => new RuleManager(rule).search(keyword, page));
+  },
+
+  'rule-manager/search-by-rule': ({ rule, keyword }) => new RuleManager(rule).search(keyword),
+
+  'rule-manager/discover-map': ({ ruleId }) => {
+    const rule = getRule(ruleId);
+    return cached(`discoverMap@${ruleId}`, HOUR, () => new RuleManager(rule).discoverMap());
+  },
+
+  'rule-manager/discover-map-by-rule': ({ rule }) => new RuleManager(rule).discoverMap(),
+
+  'rule-manager/discover': ({ ruleId, data, page = 1 }) => {
+    const rule = getRule(ruleId);
+    return cached(`discover@${ruleId}@${page}@${md5(data?.value)}`, HOUR, () => new RuleManager(rule).discover(data.value, page));
+  },
+
+  'rule-manager/discover-by-rule': ({ rule, data, page = 1 }) => new RuleManager(rule).discover(data.value, page),
+
+  'rule-manager/chapter': async ({ ruleId, filePath, noCache }) => {
+    const rule = getRule(ruleId);
+    const list = await cached(
+      `chapter@${ruleId}@${md5(filePath)}`,
+      HOUR,
+      () => new RuleManager(rule).getChapter(filePath),
+      !!noCache
+    );
+    return list.map((e) => ({ ...e, chapterPath: e.url }));
+  },
+
+  'rule-manager/chapter-by-rule': async ({ rule, filePath }) =>
+    (await new RuleManager(rule).getChapter(filePath)).map((e) => ({ ...e, chapterPath: e.url })),
+
+  /** 跨源搜索：一次问所有开了搜索的规则，找“替身”用 */
+  'rule-manager/search-all': async ({ keyword, contentType, limit = 5 }) => {
+    const kw = String(keyword || '').trim();
+    if (!kw) throw new Error('缺少 keyword');
+    const rules = rulesStore.value.filter(
+      (r) => r.enableSearch && (contentType === undefined || r.contentType === contentType)
+    );
+    const out: any[] = [];
+    await Promise.all(
+      rules.map(async (r) => {
+        const started = Date.now();
+        try {
+          const list = await new RuleManager(r).search(kw, 1);
+          out.push({
+            ruleId: r.id,
+            rule: r.name,
+            contentType: r.contentType,
+            ms: Date.now() - started,
+            count: list.length,
+            items: list.slice(0, Number(limit)).map((e) => ({ name: e.name, url: e.url, cover: e.cover, chapter: e.chapter }))
+          });
+        } catch (e: any) {
+          out.push({ ruleId: r.id, rule: r.name, contentType: r.contentType, ms: Date.now() - started, count: 0, error: String(e?.message || e) });
+        }
+      })
+    );
+    out.sort((a, b) => b.count - a.count);
+    return out;
+  },
+
+  'rule-manager/content': async ({ ruleId, chapterPath, noCache }) => {
+    const rule = getRule(ruleId);
+    const key = `content@${ruleId}@${md5(chapterPath)}`;
+    return cached(
+      key,
+      rule.contentType === ContentType.VIDEO ? HOUR : 24 * HOUR,
+      async () => {
+        let content = await new RuleManager(rule).getContent(chapterPath);
+        // 有些站点的阅读页必须跑 JS 才能过校验：用本机 Chrome 抓一次再抽图
+        const only = content.length === 1 ? content[0] : '';
+        const looksLikePage = only && /^https?:\/\//.test(only) && !/\.(jpe?g|png|webp|gif|avif)/i.test(only);
+        if (looksLikePage && needsBrowser(only)) {
+          try {
+            const page = await browserFetch(only, { waitMs: 2500, waitFor: 'amp-img' });
+            const images = extractImages(page.html, page.url);
+            if (images.length) content = images;
+          } catch (e: any) {
+            console.warn('[browser] 抓取失败', only, e?.message || e);
+          }
+        }
+        if (!content.length) throw new Error('获取内容失败');
+        const playable = (url: string) =>
+          needsMediaProxy(url, rule.host) ? mediaProxyUrl(url, mediaReferer(url, rule.host)) : url;
+        return {
+          contentType: rule.contentType,
+          contentDecoder: !!rule.contentDecoder,
+          content:
+            rule.contentType === ContentType.VIDEO || rule.contentType === ContentType.AUDIO
+              ? playable(content[0])
+              : content
+        };
+      },
+      !!noCache
+    );
+  },
+
+  'rule-manager/content-by-rule': async ({ rule, chapterPath }) => {
+    const content = await new RuleManager(rule).getContent(chapterPath);
+    const first = content[0] || '';
+    return {
+      contentType: rule.contentType,
+      content:
+        rule.contentType === ContentType.VIDEO
+          ? needsMediaProxy(first, rule.host)
+            ? mediaProxyUrl(first, mediaReferer(first, rule.host))
+            : first
+          : content
+    };
+  },
+
+  'rule-manager/content-decoder': ({ ruleId, content }) => new RuleManager(getRule(ruleId)).contentDecoder(content),
+
+  /** 调试：用规则从文本中取值 */
+  'rule-manager/analyzer-text': ({ inputText, ruleText, isArray }) => {
+    const a = new AnalyzerManager();
+    return isArray ? a.getElements(ruleText, inputText) : a.getString(ruleText, inputText);
+  },
+
+  /** 调试：按规则请求地址，返回响应体 */
+  'rule-manager/analyzer-url': async ({ rule, url, keyword }) => {
+    const r = createRule(rule || {});
+    const rm = new RuleManager(r);
+    const parsed = await rm.analyzer.parseJsUrl(url);
+    return fetch(parseRequest(parsed, r, { keyword }));
+  },
+
+  /**
+   * 诊断：服务端能不能抓到某一页、能不能从中抽出图片
+   * 漫画源排查用，例如：
+   * { "url": "https://cn.bzmgcn.com/comic/chapter/xxx/0_0.html" }
+   */
+  'debug/extract': async ({ url, host, ruleId }) => {
+    const target = String(url || '').trim();
+    if (!/^https?:\/\//i.test(target)) throw new Error('需要完整地址');
+    if (ruleId) {
+      // 走规则本身的解析流程（含 gatekeeper 预热、cookie、正文抽取），看到的就是阅读器拿到的
+      const rule = getRule(ruleId);
+      const started = Date.now();
+      try {
+        const content = await new RuleManager(rule).getContent(target);
+        // 再单独抓一次原始页面，给出结构诊断（排查抽取器为什么抓不到图）
+        let html = '';
+        try {
+          html = (await fetch(parseRequest(target, rule, {}))).body || '';
+        } catch (e: any) {
+          html = '';
+        }
+        const count = (re: RegExp) => (html.match(re) || []).length;
+        return {
+          rule: rule.name,
+          url: target,
+          ms: Date.now() - started,
+          count: content.length,
+          isPage: content.length === 1 && /^https?:\/\//.test(content[0]) && !/\.(jpe?g|png|webp|gif|avif)/i.test(content[0]),
+          sample: content.slice(0, 5),
+          page: {
+            bytes: html.length,
+            title: (html.match(/<title>([^<]*)<\/title>/i) || [, ''])[1],
+            ampImg: count(/<amp-img/gi),
+            img: count(/<img/gi),
+            ampList: count(/<amp-list/gi),
+            ampListSrc: [...html.matchAll(/<amp-list[^>]*?\bsrc="([^"]+)"/gi)].map((m) => m[1]).slice(0, 5),
+            scriptSrc: [...html.matchAll(/<script[^>]*?\bsrc="([^"]+)"/gi)].map((m) => m[1]).slice(0, 8),
+            hasAmp: /<html[^>]*\bamp\b/i.test(html),
+            snippet: html.slice(0, 1200)
+          }
+        };
+      } catch (e: any) {
+        return { rule: rule.name, url: target, ms: Date.now() - started, error: String(e?.message || e) };
+      }
+    }
+    const rule = createRule({ host: host || new URL(target).origin });
+    const started = Date.now();
+    const res = await fetch(parseRequest(target, rule, {})).catch((e: any) => {
+      throw new Error(`抓取失败：${e?.message || e}`);
+    });
+    const html = res.body || '';
+    const imgs: string[] = [];
+    const seen = new Set<string>();
+    const push = (raw: string) => {
+      let u = String(raw || '').trim().replace(/&amp;/g, '&');
+      if (!u) return;
+      if (u.startsWith('//')) u = 'https:' + u;
+      else if (u.startsWith('/')) u = new URL(target).origin + u;
+      if (!/^https?:\/\//.test(u)) return;
+      if (!/\.(jpe?g|png|webp|gif|avif|bmp)/i.test(u)) return;
+      if (seen.has(u)) return;
+      seen.add(u);
+      imgs.push(u);
+    };
+    for (const m of html.matchAll(/<amp-img[^>]*?\bsrc="([^"]+)"/gi)) push(m[1]);
+    for (const m of html.matchAll(/<img[^>]*?\b(?:src|data-src|data-original)="([^"]+)"/gi)) push(m[1]);
+    const ampLists = [...html.matchAll(/<amp-list[^>]*?\bsrc="([^"]+)"/gi)].map((m) => m[1]);
+    return {
+      url: target,
+      ms: Date.now() - started,
+      bytes: html.length,
+      title: (html.match(/<title>([^<]*)<\/title>/i) || [, ''])[1],
+      ampListCount: ampLists.length,
+      images: imgs.length,
+      sample: imgs.slice(0, 5)
+    };
+  },
+
+  // ======================= 收藏 =======================
+  'resource-favorites/list': () => favoritesStore.value,
+  'resource-favorites/star': (data) => upsertResource(favoritesStore, data),
+  'resource-favorites/unstar': (data) => {
+    favoritesStore.set(favoritesStore.value.filter((e) => !sameResource(e, data)));
+    return true;
+  },
+
+  // ======================= 历史 =======================
+  'resource-history/list': () => historyStore.value,
+  'resource-history/add': (data) => upsertResource(historyStore, data, 300),
+  'resource-history/remove': (data) => {
+    historyStore.set(historyStore.value.filter((e) => !sameResource(e, data)));
+    return true;
+  },
+  'resource-history/clear': () => {
+    historyStore.set([]);
+    return true;
+  },
+
+  // ======================= 章节进度 =======================
+  'chapter-history/list': ({ ruleId, filePath }) =>
+    chapterHistoryStore.value
+      .filter((e) => e.ruleId === ruleId && e.filePath === filePath)
+      .sort((a, b) => b.updateTime - a.updateTime),
+
+  'chapter-history/save': (data) => {
+    const list = chapterHistoryStore.value;
+    const idx = list.findIndex((e) => e.ruleId === data.ruleId && e.filePath === data.filePath && e.chapterPath === data.chapterPath);
+    const row = { ...(idx > -1 ? list[idx] : {}), ...data, updateTime: Date.now() };
+    if (idx > -1) list[idx] = row;
+    else list.push(row);
+    if (list.length > 5000) list.splice(0, list.length - 5000);
+    chapterHistoryStore.save();
+    return true;
+  },
+
+  // ======================= 配置 =======================
+  'config/read': () => configStore.value,
+  'config/update': (data) => {
+    configStore.set({ ...configStore.value, ...data });
+    return configStore.value;
+  },
+
+  // ======================= 直播 =======================
+  ...liveRoutes,
+
+  // ======================= 缓存 =======================
+  'cache/clear': () => {
+    cache.clear();
+    return true;
+  }
+};

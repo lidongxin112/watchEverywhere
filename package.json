@@ -1,0 +1,27 @@
+{
+  "name": "watch-everywhere",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "watchEverywhere - 基于规则的多源聚合阅读 / 观看工具（参考 any-reader 实现）",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm run dev -w @watch-everywhere/server\" \"npm run dev -w @watch-everywhere/web\"",
+    "dev:server": "npm run dev -w @watch-everywhere/server",
+    "dev:web": "npm run dev -w @watch-everywhere/web",
+    "build": "npm run build -w @watch-everywhere/web",
+    "start": "npm run start -w @watch-everywhere/server",
+    "postinstall": "node scripts/setup-iptv.mjs",
+    "iptv:update": "node scripts/setup-iptv.mjs --update",
+    "test": "npm run test -w @watch-everywhere/core && npm run test -w @watch-everywhere/server"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.25.0",
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

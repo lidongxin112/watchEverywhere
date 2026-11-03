@@ -1,0 +1,32 @@
+{
+  "name": "@watch-everywhere/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "watchEverywhere 接口服务：规则管理 / 内容解析 / 收藏 / 历史",
+  "scripts": {
+    "dev": "tsx watch src/run.ts",
+    "start": "cross-env NODE_ENV=production tsx src/run.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@koa/bodyparser": "^5.1.1",
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^13.1.0",
+    "@watch-everywhere/core": "*",
+    "axios": "^1.7.9",
+    "koa": "^2.15.3",
+    "koa-static": "^5.0.0",
+    "puppeteer-core": "^25.16.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/koa": "^2.15.0",
+    "@types/koa__cors": "^5.0.0",
+    "@types/koa__router": "^12.0.4",
+    "@types/koa-static": "^4.0.4",
+    "@types/node": "^22.10.2",
+    "cross-env": "^7.0.3",
+    "typescript": "^5.7.2"
+  }
+}
