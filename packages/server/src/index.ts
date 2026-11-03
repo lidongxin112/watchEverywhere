@@ -126,6 +126,27 @@ export function createServer() {
   return app;
 }
 
+/**
+ * 端口被占用时不直接崩：
+ *  - 如果占用者是 watchEverywhere 自己（/api/app/info 能通），说明已经有一个实例在跑，挂起本进程即可
+ *  - 否则打印一句人话再退出，避免一屏 stack
+ */
+async function handlePortInUse(port: number): Promise<'reuse' | 'foreign'> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/app/info`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(2000)
+    });
+    const json: any = await res.json().catch(() => null);
+    if (json && json.code === 0 && json.data && json.data.version) return 'reuse';
+  } catch {
+    /* 不是我们的服务 */
+  }
+  return 'foreign';
+}
+
 export function start(port = Number(process.env.PORT) || 8898) {
   const app = createServer();
   const server = app.listen(port, () => {
@@ -136,6 +157,21 @@ export function start(port = Number(process.env.PORT) || 8898) {
     // 内置 iPTV：就绪后自动添加 / 更新「内置 iPTV」直播源
     startIptv(ensureBuiltinSource).catch((e) => console.warn('[iptv] 启动失败', e));
   });
+  server.on('error', async (err: any) => {
+    if (err?.code !== 'EADDRINUSE') throw err;
+    const kind = await handlePortInUse(port);
+    if (kind === 'reuse') {
+      console.log(`\n  ⚠️  端口 ${port} 已被另一个 watchEverywhere 实例占用，直接沿用那个实例。`);
+      console.log(`     要重启请先关掉它：lsof -ti:${port} | xargs kill\n`);
+    } else {
+      console.error(`\n  ✗ 端口 ${port} 被其他程序占用（不是 watchEverywhere）。`);
+      console.error(`     换个端口再启动：PORT=8899 npm run dev:server\n`);
+      process.exit(1);
+    }
+    // 让进程活着（dev 下 concurrently -k 不会因为本进程退出而杀掉 web）
+    setInterval(() => {}, 1 << 30);
+  });
+
   let exiting = false;
   const exit = async () => {
     if (exiting) return;
