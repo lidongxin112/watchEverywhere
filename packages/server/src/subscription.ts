@@ -35,10 +35,6 @@ export interface CheckResult {
   error?: string;
 }
 
-function ruleKey(r: Rule) {
-  return `${r.name}@${r.host}`;
-}
-
 /** 把远端规则合并进本地：同 id 或同 name+host 视为同一条 */
 function mergeRules(incoming: Rule[]): { added: number; updated: number } {
   const list = rulesStore.value;

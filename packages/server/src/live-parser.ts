@@ -71,7 +71,7 @@ export function parseM3U(text: string): ParsedPlaylist {
   let pending: { name: string; group: string; logo: string; tvgId: string; tvgName: string } | null = null;
   let extGroup = '';
 
-  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     if (/^#EXTM3U/i.test(line)) {
@@ -113,7 +113,7 @@ export function parseM3U(text: string): ParsedPlaylist {
 export function parseTXT(text: string): ParsedPlaylist {
   const col = new Collector();
   let group = DEFAULT_GROUP;
-  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('//')) continue;
     const idx = line.indexOf(',');
@@ -132,7 +132,7 @@ export function parseTXT(text: string): ParsedPlaylist {
 }
 
 export function parsePlaylist(text: string): ParsedPlaylist {
-  const t = text.trimStart().replace(/^﻿/, '');
+  const t = text.trimStart().replace(/^\uFEFF/, '');
   if (/^#EXTM3U/i.test(t) || /#EXTINF:/i.test(t)) return parseM3U(t);
   return parseTXT(t);
 }

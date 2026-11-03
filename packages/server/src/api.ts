@@ -371,8 +371,8 @@ export const routes: Record<string, Handler> = {
       try {
         const res = await fetch(parseRequest(req, ruleForFetch));
         return JSON.parse(res.body);
-      } catch (e: any) {
-        return { code: -2, msg: `请求失败：${String(e?.message || e).slice(0, 120)}` };
+      } catch (err: any) {
+        return { code: -2, msg: `请求失败：${String(err?.message || err).slice(0, 120)}` };
       }
     };
 
@@ -426,7 +426,7 @@ export const routes: Record<string, Handler> = {
         let html = '';
         try {
           html = (await fetch(parseRequest(target, rule, {}))).body || '';
-        } catch (e: any) {
+        } catch {
           html = '';
         }
         const count = (re: RegExp) => (html.match(re) || []).length;
@@ -439,7 +439,7 @@ export const routes: Record<string, Handler> = {
           sample: content.slice(0, 5),
           page: {
             bytes: html.length,
-            title: (html.match(/<title>([^<]*)<\/title>/i) || [, ''])[1],
+            title: (html.match(/<title>([^<]*)<\/title>/i) || [null, ''])[1],
             ampImg: count(/<amp-img/gi),
             img: count(/<img/gi),
             ampList: count(/<amp-list/gi),
@@ -479,7 +479,7 @@ export const routes: Record<string, Handler> = {
       url: target,
       ms: Date.now() - started,
       bytes: html.length,
-      title: (html.match(/<title>([^<]*)<\/title>/i) || [, ''])[1],
+      title: (html.match(/<title>([^<]*)<\/title>/i) || [null, ''])[1],
       ampListCount: ampLists.length,
       images: imgs.length,
       sample: imgs.slice(0, 5)

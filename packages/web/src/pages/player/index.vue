@@ -338,7 +338,8 @@ function onKey(e: KeyboardEvent) {
   if (!video || iframeMode.value) return;
   if (e.key === ' ') {
     e.preventDefault();
-    video.paused ? video.play() : video.pause();
+    if (video.paused) void video.play();
+    else video.pause();
   } else if (e.key === 'ArrowRight' && !e.shiftKey) video.currentTime += 10;
   else if (e.key === 'ArrowLeft' && !e.shiftKey) video.currentTime -= 10;
   else if (e.key === 'ArrowRight' && e.shiftKey) go(next.value);

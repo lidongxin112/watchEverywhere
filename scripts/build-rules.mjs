@@ -636,12 +636,6 @@ const BILI_UGC_RANK_LIST = `@js:(() => {
   }));
 })()`;
 
-const biliRank = (rid) =>
-  JSON.stringify({
-    url: 'https://api.bilibili.com/x/web-interface/ranking/v2?rid=' + rid + '&type=all',
-    headers: { Referer: 'https://www.bilibili.com/', Origin: 'https://www.bilibili.com' }
-  });
-
 const BILI_UGC_RANK_URL = `@js:(async () => {
   const buvid = await __biliBuvid();
   const cookie = buvid ? 'buvid3=' + buvid : '';
@@ -693,15 +687,6 @@ const bilibiliVideo = rule({
 // ============================================================
 
 /** 详情页章节项 -> /comic/chapter/<slug>/<section>_<chapter>.html */
-const BZ_CHAPTER = `@js:(() => {
-  const $ = cheerio.load(result);
-  const a = $(result).is('a') ? $(result) : $(result).find('a').first();
-  const href = a.attr('href') || '';
-  const m = /comic_id=([^&]+)&(?:amp;)?section_slot=(\\d+)&(?:amp;)?chapter_slot=(\\d+)/.exec(href.replace(/&amp;/g, '&'));
-  if (!m) return '';
-  return '/comic/chapter/' + m[1] + '/' + m[2] + '_' + m[3] + '.html';
-})()`;
-
 // ---- 包子漫画：gatekeeper 浏览器校验（SHA-256 前导零位 PoW）----
 // 站点首次访问会下发校验页，这里在规则里算完再提交，
 // 拿到的 cookie 由引擎的 cookie 罐（request.ts）自动保存、自动携带。
@@ -755,8 +740,6 @@ const BZ_SEARCH = `@js:(async () => {
  * 发现走站内的 AMP 列表接口：36 条/页、带 next 游标，能一直翻。
  * 分类参数：type=题材，region=地区，state=连载状态
  */
-const bzList = (name, params) => name + '::' + JSON.stringify({ url: '/api/bzmhq/amp_comic_list?' + params, timeout: 30000 });
-
 const BZ_DISCOVER = `@js:(async () => {
   await __gkPrime('https://cn.bzmgcn.com');
   const q = '&filter=*&page=$page&limit=36&language=cn';

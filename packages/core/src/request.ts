@@ -158,7 +158,7 @@ function replaceVars(url: string, rule: Rule, vars: UrlVars) {
 
 /** 把规则中的地址（字符串 / JSON 字符串 / 对象）转换成请求参数 */
 export function parseRequest(url: string | Record<string, any>, rule: Rule, vars: UrlVars = {}): RequestParams {
-  let params: RequestParams = typeof url === 'object' && url ? { method: 'get', ...(url as any) } : { method: 'get', url: String(url) };
+  const params: RequestParams = typeof url === 'object' && url ? { method: 'get', ...(url as any) } : { method: 'get', url: String(url) };
 
   params.url = replaceVars(String(params.url ?? ''), rule, vars);
   if (params.url.trim().startsWith('{')) {

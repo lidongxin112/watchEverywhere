@@ -25,7 +25,9 @@
             </div>
             <iframe class="reader__web" :src="webPage" referrerpolicy="no-referrer" allowfullscreen></iframe>
           </template>
-          <img v-else v-for="(src, idx) in content" :key="idx" :src="src" loading="lazy" referrerpolicy="no-referrer" alt="" />
+          <template v-else>
+            <img v-for="(src, idx) in content" :key="idx" :src="src" loading="lazy" referrerpolicy="no-referrer" alt="" />
+          </template>
         </div>
         <!-- 小说 -->
         <template v-else>

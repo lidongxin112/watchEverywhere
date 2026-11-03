@@ -75,7 +75,7 @@ export class RuleManager {
   // ======================= 搜索 =======================
 
   async search(keyword: string, page = 1, pageSize = 20): Promise<SearchItem[]> {
-    let url = this.rule.searchUrl;
+    const url = this.rule.searchUrl;
     if (!url) return [];
     if (page > 1 && !PAGE_PATTERN.test(url)) return [];
 

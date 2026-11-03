@@ -103,7 +103,7 @@ const mergedGroups = computed(() => {
   const norm = (s: string) =>
     String(s || '')
       .toLowerCase()
-      .replace(/[\s\-_:：·,，.。!！?？"'“”‘’()（）\[\]【】]/g, '');
+      .replace(/[\s\-_:：·,，.。!！?？"'“”‘’()（）[\]【】]/g, '');
   const map = new Map<string, { key: string; name: string; sources: { rule: Rule; item: ResourceItem }[] }>();
   for (const g of groups.value) {
     for (const item of g.list) {

@@ -43,8 +43,11 @@ function readVersion(): string {
 }
 
 export const APP_VERSION = readVersion();
-export const UPDATE_URL = process.env.WE_UPDATE_URL || '';
-export const NOTICE_URL = process.env.WE_NOTICE_URL || '';
+
+/** 每次调用时读环境变量，方便测试/运行时改配置 */
+const updateUrl = () => process.env.WE_UPDATE_URL || '';
+const noticeUrl = () => process.env.WE_NOTICE_URL || '';
+
 
 export type Platform = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64';
 
@@ -52,7 +55,6 @@ export type Platform = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64';
 export function isStandalone(): boolean {
   if ((process as any).pkg) return true;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const sea = require('node:sea');
     return typeof sea.isSea === 'function' ? sea.isSea() : false;
   } catch {
@@ -110,11 +112,12 @@ export async function checkUpdate(force = false): Promise<UpdateInfo> {
     platform,
     checkedAt: Date.now()
   };
-  if (!UPDATE_URL) return { ...base, error: '未配置 WE_UPDATE_URL' };
+  const url = updateUrl();
+  if (!url) return { ...base, error: '未配置 WE_UPDATE_URL' };
   if (!force && cache && Date.now() - cache.at < TTL) return cache.data;
 
   try {
-    const res = await fetch(UPDATE_URL, { headers: { 'cache-control': 'no-cache' } });
+    const res = await fetch(url, { headers: { 'cache-control': 'no-cache' } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json: any = await res.json();
     const latest = String(json.version || '0');
@@ -137,9 +140,10 @@ export async function checkUpdate(force = false): Promise<UpdateInfo> {
 
 /** 远程公告（可选）：推送一句话通知给所有客户端 */
 export async function fetchNotices(): Promise<any[]> {
-  if (!NOTICE_URL) return [];
+  const url = noticeUrl();
+  if (!url) return [];
   try {
-    const res = await fetch(NOTICE_URL, { headers: { 'cache-control': 'no-cache' } });
+    const res = await fetch(url, { headers: { 'cache-control': 'no-cache' } });
     if (!res.ok) return [];
     const json = await res.json();
     const list = Array.isArray(json) ? json : json.notices || [];

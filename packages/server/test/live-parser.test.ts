@@ -13,7 +13,7 @@ import {
 } from '../src/live-parser';
 
 test('m3u: header epg / attrs / comma in attr / multi lines / EXTGRP', () => {
-  const text = `﻿#EXTM3U x-tvg-url="/playback.xml"
+  const text = `\uFEFF#EXTM3U x-tvg-url="/playback.xml"
 #EXT-X-APP APTV
 #EXTINF:-1 tvg-id="CCTV1" tvg-name="CCTV1" tvg-logo="http://l/1.png" group-title="央视,频道",CCTV-1 综合
 http://a/cctv1.m3u8

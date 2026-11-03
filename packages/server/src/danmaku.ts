@@ -42,7 +42,13 @@ export async function fetchDanmaku(cid: string | number): Promise<DanmakuItem[]>
     )
   );
 
-  const xml = String(res.body || '');
+  const list = parseDanmakuXml(String(res.body || ''));
+  cache.set(`dm@${id}`, list, TTL);
+  return list;
+}
+
+/** 解析 B 站弹幕 XML（单独抽出来便于测试） */
+export function parseDanmakuXml(xml: string): DanmakuItem[] {
   const list: DanmakuItem[] = [];
   const re = /<d\s+p="([^"]*)"[^>]*>([\s\S]*?)<\/d>/g;
   let m: RegExpExecArray | null;
@@ -66,6 +72,5 @@ export async function fetchDanmaku(cid: string | number): Promise<DanmakuItem[]>
     if (list.length >= LIMIT) break;
   }
   list.sort((a, b) => a.t - b.t);
-  cache.set(`dm@${id}`, list, TTL);
   return list;
 }

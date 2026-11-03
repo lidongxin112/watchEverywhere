@@ -23,6 +23,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - name: 打包 ${{ matrix.platform }}
         run: node scripts/build-desktop.mjs ${{ matrix.platform }}

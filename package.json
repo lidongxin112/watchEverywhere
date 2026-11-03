@@ -15,10 +15,16 @@
     "start": "npm run start -w @watch-everywhere/server",
     "postinstall": "node scripts/setup-iptv.mjs",
     "iptv:update": "node scripts/setup-iptv.mjs --update",
-    "test": "npm run test -w @watch-everywhere/core && npm run test -w @watch-everywhere/server"
+    "test": "npm run test -w @watch-everywhere/core && npm run test -w @watch-everywhere/server",
+    "typecheck": "tsc --noEmit -p packages/server/tsconfig.json && vue-tsc --noEmit -p packages/web/tsconfig.json",
+    "lint": "eslint ."
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-vue": "^10.12.0",
+    "typescript-eslint": "^8.72.1",
+    "vue-eslint-parser": "^10.4.1"
   },
   "engines": {
     "node": ">=18"
