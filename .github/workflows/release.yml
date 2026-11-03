@@ -1,0 +1,50 @@
+name: release
+
+# 打 tag 触发：git tag v0.2.0 && git push origin v0.2.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（留空用 package.json）'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 跑核心测试
+        run: npm test
+
+      - name: 打包三平台可执行文件
+        run: node scripts/build-desktop.mjs all
+
+      - name: 生成更新清单
+        env:
+          WE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/make-manifest.mjs "$VERSION" "见 Release 说明"
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/watchEverywhere-mac-arm64
+            dist/watchEverywhere-mac-x64
+            dist/watchEverywhere-win-x64.exe
+            dist/latest.json
+          generate_release_notes: true
