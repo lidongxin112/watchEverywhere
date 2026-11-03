@@ -64,6 +64,12 @@
           <a-button v-if="danmakuCid" size="small" :type="danmakuOn ? 'primary' : 'default'" @click="toggleDanmaku">
             弹幕 {{ danmakuOn ? '开' : '关' }}
           </a-button>
+          <a-tooltip title="画中画（小窗播放）">
+            <a-button size="small" :disabled="iframeMode || !playUrl" @click="togglePip"><PictureOutlined /></a-button>
+          </a-tooltip>
+          <a-tooltip :title="shortcutTip">
+            <a-button size="small">快捷键</a-button>
+          </a-tooltip>
           <a-button size="small" @click="iframeMode = !iframeMode">{{ iframeMode ? '播放器模式' : '网页模式' }}</a-button>
           <a-button size="small" @click="openRaw"><ExportOutlined /></a-button>
         </a-space>
@@ -181,6 +187,19 @@ async function loadDanmaku(cid: string) {
 }
 const road = ref('');
 const rate = ref(setting.data.player.playbackRate || 1);
+const volume = ref(Number(setting.data.player.volume ?? 1));
+const shortcutTip = '空格 播放/暂停 · ← → 快退/快进 10s · Shift+← → 上/下一集 · F 全屏 · M 静音 · ↑ ↓ 音量';
+
+async function togglePip() {
+  const video = videoRef.value;
+  if (!video) return;
+  try {
+    if (document.pictureInPictureElement) await document.exitPictureInPicture();
+    else await video.requestPictureInPicture();
+  } catch (e: any) {
+    console.warn('画中画失败', e?.message || e);
+  }
+}
 const rateOptions = [0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((v) => ({ value: v, label: `${v}x` }));
 let hls: Hls | null = null;
 let resumed = false;
@@ -270,6 +289,7 @@ async function init(noCache = false) {
 function onLoaded() {
   const video = videoRef.value!;
   video.playbackRate = rate.value;
+  video.volume = volume.value;
   const t = Number(q.currentTime || 0);
   if (!resumed && setting.data.player.resume && t > 5 && (!video.duration || t < video.duration - 10)) {
     video.currentTime = t;
@@ -331,6 +351,11 @@ watch(rate, (v) => {
   if (videoRef.value) videoRef.value.playbackRate = v;
 });
 
+watch(volume, (v) => {
+  setting.data.player.volume = v;
+  if (videoRef.value) videoRef.value.volume = v;
+});
+
 function onKey(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -344,7 +369,15 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'ArrowLeft' && !e.shiftKey) video.currentTime -= 10;
   else if (e.key === 'ArrowRight' && e.shiftKey) go(next.value);
   else if (e.key === 'ArrowLeft' && e.shiftKey) go(prev.value);
-  else if (e.key === 'f') video.requestFullscreen?.();
+  else if (e.key === 'f' || e.key === 'F') video.requestFullscreen?.();
+  else if (e.key === 'm' || e.key === 'M') video.muted = !video.muted;
+  else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    volume.value = Math.min(1, Math.round((video.volume + 0.1) * 10) / 10);
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    volume.value = Math.max(0, Math.round((video.volume - 0.1) * 10) / 10);
+  }
 }
 
 useBus(EVENT_CHAPTERS_BOX).on(() => episodesRef.value?.querySelector('.active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));

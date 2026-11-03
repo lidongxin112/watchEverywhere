@@ -7,11 +7,18 @@
  *
  * 资源站给的是「分类 + 多线路 + 直链 m3u8」，比单站抓页面稳定得多。
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { cmsUrlToRule, type Rule } from '@watch-everywhere/core';
 
 const file = path.resolve(import.meta.dirname, '../rules/aggregate.json');
+
+/** name+host 派生固定 id，重复生成不会漂移 */
+function stableRuleId(name: string, host: string) {
+  const h = crypto.createHash('sha256').update(`${name}@${host}`).digest('hex');
+  return [h.slice(0, 8), h.slice(8, 12), '5' + h.slice(13, 16), ((parseInt(h.slice(16, 18), 16) & 0x3f) | 0x80).toString(16) + h.slice(18, 20), h.slice(20, 32)].join('-');
+}
 
 /** 默认几个公开接口（失效就换掉） */
 const DEFAULT_APIS = [
@@ -51,6 +58,7 @@ async function main() {
     try {
       const rule = await cmsUrlToRule(api);
       rule.name = `资源站 · ${new URL(api).hostname}`;
+      rule.id = stableRuleId(rule.name, rule.host);
       rule.group = '资源站';
       rule.sort = -10;
       rule.contentUrl = '';

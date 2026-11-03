@@ -8,7 +8,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import crypto from 'node:crypto';
 
 const CONTENT_TYPE = { MANGA: 0, NOVEL: 1, VIDEO: 2, AUDIO: 3 };
 
@@ -35,10 +35,16 @@ const base = {
   discoverAuthor: ''
 };
 
+/** 用 name+host 派生固定 id：同一规则重复导入/重建都不会换 id，收藏和历史不会断 */
+function stableId(name, host) {
+  const h = crypto.createHash('sha256').update(`${name}@${host}`).digest('hex');
+  return [h.slice(0, 8), h.slice(8, 12), '5' + h.slice(13, 16), ((parseInt(h.slice(16, 18), 16) & 0x3f) | 0x80).toString(16) + h.slice(18, 20), h.slice(20, 32)].join('-');
+}
+
 function rule(data) {
   return {
     ...base,
-    id: randomUUID(),
+    id: stableId(String(data.name || ''), String(data.host || '')),
     ...data
   };
 }

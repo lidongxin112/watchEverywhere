@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import axios from 'axios';
 import {
   ContentType,
@@ -11,7 +13,7 @@ import {
   AnalyzerManager,
   type Rule
 } from '@watch-everywhere/core';
-import { MemoryCache } from './store';
+import { DATA_DIR, MemoryCache } from './store';
 import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
 import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
@@ -197,9 +199,20 @@ export const routes: Record<string, Handler> = {
     return res;
   },
 
-  /** 导入：eso:// / JSON / 网络地址 */
+  /** 导入：eso:// / JSON / 网络地址（按 id 合并，重复导入不会产生副本） */
   'resource-rule/import': async ({ url }) => {
     const rules = await text2rules(String(url || ''));
+    // 导入前留一份快照，误删可回滚
+    try {
+      const dir = path.join(DATA_DIR, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, `rules-${new Date().toISOString().replace(/[:.]/g, '-')}.json`),
+        JSON.stringify(rulesStore.value, null, 2)
+      );
+    } catch {
+      /* 备份失败不影响导入 */
+    }
     for (const rule of rules) saveRule(rule);
     return rules.length;
   },

@@ -121,6 +121,26 @@ async function changeRule(id: string, refresh = false) {
   loading.value = false;
   categoryList.value = res.data || [];
   if (res.code !== 0) errMsg.value = res.msg;
+
+  // 恢复上次看的分组：能按名字找到就用它，否则用第一个
+  let saved: { name: string; value: string } | null = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(`we-discover-tab:${id}`) || 'null');
+  } catch {
+    saved = null;
+  }
+  const hit = saved ? categoryList.value.find((g) => g.name === saved!.name) : null;
+  const group = hit || categoryList.value[0];
+  if (group) {
+    const pair = (saved && hit ? group.pairs.find((p) => p.value === saved!.value) : null) || group.pairs[0];
+    if (pair) {
+      current.value = { name: pair.name, value: pair.value };
+      page.value = 1;
+      noMore.value = false;
+      await load();
+      return;
+    }
+  }
 }
 
 async function load() {
@@ -142,6 +162,11 @@ async function load() {
 function changeCategory(row: { name: string; value?: string }) {
   if (!row.value) return;
   current.value = { name: row.name, value: row.value };
+  try {
+    localStorage.setItem(`we-discover-tab:${ruleId.value}`, JSON.stringify({ name: row.name, value: row.value }));
+  } catch {
+    /* 忽略隐私模式 */
+  }
   list.value = [];
   page.value = 1;
   noMore.value = false;
@@ -270,6 +295,7 @@ onDeactivated(() => (active = false));
   justify-content: center;
   padding: 16px 0;
 }
+/* 记住上次选中的分类 */
 @media (max-width: 640px) {
   .category {
     flex-direction: column;
