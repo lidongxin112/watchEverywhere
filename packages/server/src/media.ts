@@ -123,13 +123,8 @@ export function registerMediaProxy(router: Router) {
       return;
     }
 
-    // 上游 4xx（签名过期 / 防盗链）时把状态带出去，客户端据此自动重新解析
-    if (res.status >= 400) {
-      ctx.set('x-upstream-status', String(res.status));
-      pushLog('warn', 'media/proxy', `upstream ${res.status} ${finalUrlForLog(u)}`);
-    }
-
     const upstream = res.data as Readable;
+    // 上游出错 / 客户端提前断开时，别让 Node 抛未捕获异常（会连带把 vite 代理拖崩）
     upstream.on('error', () => {});
     ctx.res.on('close', () => upstream.destroy());
     ctx.res.on('error', () => upstream.destroy());
@@ -142,23 +137,63 @@ export function registerMediaProxy(router: Router) {
     } catch {
       /* ignore */
     }
+
+    // 上游 4xx/5xx：不要把它当媒体流往下传（HTML 错误页塞给 hls.js 会直接炸）
+    if (res.status >= 400) {
+      await readAll(upstream).catch(() => '');
+      upstream.destroy();
+      ctx.set('x-upstream-status', String(res.status));
+      pushLog('warn', 'media/proxy', `upstream ${res.status} ${finalUrlForLog(u)}`, { referer: r });
+      ctx.status = res.status;
+      ctx.type = 'text/plain; charset=utf-8';
+      ctx.body = `upstream ${res.status}`;
+      return;
+    }
+
     const isPlaylist = /mpegurl/i.test(ct) || path.endsWith('.m3u8') || path.endsWith('.m3u');
 
-    ctx.status = res.status;
-    if (isPlaylist && res.status < 400) {
+    if (isPlaylist) {
       const text = await readAll(upstream).catch(() => '');
       if (text.trimStart().startsWith('#EXTM3U')) {
+        ctx.status = 200;
         ctx.set('Content-Type', 'application/vnd.apple.mpegurl');
         ctx.set('Cache-Control', 'no-cache');
         ctx.body = rewriteM3u8(text, finalUrl, (nested) => mediaProxyUrl(nested, r));
       } else {
-        ctx.set('Content-Type', ct || 'text/plain');
-        ctx.body = text;
+        // 拿到的不是清单（常见于 CDN 返回错误页），交给客户端重新解析
+        pushLog('warn', 'media/proxy', `清单内容异常 ${finalUrlForLog(u)}`, { snippet: text.slice(0, 120) });
+        ctx.status = 502;
+        ctx.type = 'text/plain; charset=utf-8';
+        ctx.body = 'playlist invalid';
       }
       return;
     }
 
-    for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+    // 小文件（图标、密钥、单张图）直接缓冲，避免分块传输带来的粘包问题
+    const len = Number(res.headers['content-length'] || 0);
+    if (len && len <= 4 * 1024 * 1024) {
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve) => {
+        upstream.on('data', (c: Buffer) => chunks.push(c));
+        upstream.on('end', () => resolve());
+        upstream.on('error', () => resolve());
+      }).catch(() => {});
+      const buf = Buffer.concat(chunks);
+      ctx.status = res.status;
+      ctx.set('Content-Type', ct || 'application/octet-stream');
+      for (const h of ['content-range', 'accept-ranges']) {
+        const v = res.headers[h];
+        if (v) ctx.set(h, String(v));
+      }
+      ctx.set('Cache-Control', 'no-cache');
+      // 不转发上游 content-length：axios 可能解压过，长度对不上会导致客户端解析错乱
+      ctx.body = buf;
+      return;
+    }
+
+    ctx.status = res.status;
+    ctx.set('Content-Type', ct || 'application/octet-stream');
+    for (const h of ['content-range', 'accept-ranges']) {
       const v = res.headers[h];
       if (v) ctx.set(h, String(v));
     }
