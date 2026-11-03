@@ -18,7 +18,7 @@ import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
 import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
-import { clearLogs, getLogs, pushLog } from './logs';
+import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
@@ -125,7 +125,7 @@ export const routes: Record<string, Handler> = {
 
   'app/notices': () => fetchNotices(),
 
-  /** 诊断日志：版本、平台、规则数 + 最近 300 条接口错误 */
+  /** 诊断日志：版本、平台、规则数 + 内存/磁盘日志 */
   'app/logs': () => ({
     generatedAt: Date.now(),
     version: APP_VERSION,
@@ -134,8 +134,15 @@ export const routes: Record<string, Handler> = {
     node: process.version,
     dataDir: DATA_DIR,
     ruleCount: rulesStore.value.length,
-    logs: getLogs()
+    logs: getLogs(),
+    persisted: readPersistedLogs(200)
   }),
+
+  /** 前端上报错误（播放器 hls / video 报错等） */
+  'app/client-log': ({ level = 'warn', scope = 'web', message = '', extra }) => {
+    pushLog(level === 'error' ? 'error' : 'warn', `web:${scope}`, String(message), extra);
+    return true;
+  },
 
   'app/logs-clear': () => {
     clearLogs();

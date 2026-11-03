@@ -117,6 +117,7 @@ export function registerMediaProxy(router: Router) {
         headers
       });
     } catch (err: any) {
+      pushLog('error', 'media/proxy', `代理请求失败：${err?.message || err}`, { url: finalUrlForLog(u), referer: r });
       ctx.status = 502;
       ctx.body = `upstream error: ${err?.message}`;
       return;

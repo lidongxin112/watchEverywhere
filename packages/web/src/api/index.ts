@@ -282,3 +282,7 @@ export interface AppLogs {
 }
 
 export const getAppLogs = () => request<AppLogs>('app/logs', {}, false);
+
+/** 前端错误上报（写进服务端诊断日志） */
+export const postClientLog = (data: { level?: string; scope?: string; message: string; extra?: Record<string, any> }) =>
+  request('app/client-log', data, false);

@@ -247,6 +247,18 @@ async function play(url: string) {
           return;
         }
         if (data.type === HlsLib.ErrorTypes.NETWORK_ERROR) {
+          void postClientLog({
+            level: 'error',
+            scope: 'hls',
+            message: `hls network error: ${data.details || data.type}`,
+            extra: {
+              url: data.url || data.frag?.url || '',
+              response: data.response?.code || data.response?.text || '',
+              playUrl: playUrl.value,
+              chapterPath,
+              ruleId
+            }
+          });
           void retryOnce('视频加载失败（网络错误或资源已失效）');
           return;
         }
@@ -344,6 +356,12 @@ async function retryOnce(reason: string) {
 
 function onVideoError() {
   if (hls || iframeMode.value || loading.value) return;
+  void postClientLog({
+    level: 'error',
+    scope: 'video',
+    message: 'video 元素报错',
+    extra: { playUrl: playUrl.value, chapterPath, ruleId, name }
+  });
   void retryOnce('视频无法播放（格式不支持或资源已失效）');
 }
 
