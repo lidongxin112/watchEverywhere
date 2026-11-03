@@ -5,42 +5,73 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: '版本号（留空用 package.json）'
-        required: false
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  # macOS 的二进制注入后必须重新签名，所以放到 mac runner 上跑
+  build-mac:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        platform: [mac-arm64, mac-x64]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - run: npm ci
+      - run: npm test
+      - name: 打包 ${{ matrix.platform }}
+        run: node scripts/build-desktop.mjs ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}
+          path: dist/watchEverywhere-${{ matrix.platform }}
+          if-no-files-found: error
 
-      - name: 跑核心测试
-        run: npm test
+  # Windows 包不需要签名，直接在 windows runner 上注入
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - shell: bash
+        run: npm ci
+      - name: 打包 win-x64
+        shell: bash
+        run: node scripts/build-desktop.mjs win-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          path: dist/watchEverywhere-win-x64.exe
+          if-no-files-found: error
 
-      - name: 打包三平台可执行文件
-        run: node scripts/build-desktop.mjs all
-
+  release:
+    needs: [build-mac, build-win]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: 生成更新清单
         env:
           WE_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          chmod +x dist/watchEverywhere-mac-* 2>/dev/null || true
           node scripts/make-manifest.mjs "$VERSION" "见 Release 说明"
-
-      - name: 发布 Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/watchEverywhere-mac-arm64
