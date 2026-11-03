@@ -355,46 +355,28 @@ onMounted(() => {
     width: auto;
     flex: 1;
   }
-  .tips {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  font-size: 12px;
-  background: var(--we-color-primary-bg);
-  border-bottom: 1px solid var(--we-border-color, rgba(128, 128, 128, 0.2));
-}
-
-.tips__item {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tips__tag {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: var(--we-color-primary);
-  color: #fff;
-  font-size: 11px;
-}
-.tips__close {
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  opacity: 0.6;
-}
-.layout__body {
+  .layout__body {
     flex-direction: column-reverse;
   }
   .sidebar {
     width: 100%;
     flex-direction: row;
     justify-content: space-around;
-    padding: 2px 4px;
+    padding: 2px 4px calc(2px + env(safe-area-inset-bottom, 0px));
     border-right: none;
     border-top: 1px solid var(--we-top-bar-border);
+  }
+  .tips {
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding: 6px 10px;
+  }
+  .tips__body {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tips__item {
+    white-space: normal;
   }
   .sidebar__spacer {
     display: none;

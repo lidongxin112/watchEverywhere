@@ -15,6 +15,7 @@ import { MemoryCache } from './store';
 import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
 import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
+import { fetchDanmaku } from './danmaku';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { liveRoutes } from './live';
 import {
@@ -98,6 +99,13 @@ function upsertResource(store: { value: ResourceItem[]; save: () => void }, data
  * 路径命名与 any-reader 保持一致，方便对照。
  */
 export const routes: Record<string, Handler> = {
+  /** 弹幕：{ cid } 或 { url }（B 站 /x/v1/dm/list.so 的 oid） */
+  'danmaku/list': async ({ cid, url }) => {
+    const id = cid || String(url || '').replace(/\D/g, '');
+    const list = await fetchDanmaku(id);
+    return { cid: String(id || ''), count: list.length, list };
+  },
+
   // ======================= 版本 / 更新 =======================
   'app/info': () => ({
     version: APP_VERSION,
@@ -253,9 +261,13 @@ export const routes: Record<string, Handler> = {
         if (!content.length) throw new Error('获取内容失败');
         const playable = (url: string) =>
           needsMediaProxy(url, rule.host) ? mediaProxyUrl(url, mediaReferer(url, rule.host)) : url;
+        // 哔哩哔哩的章节地址里带 cid（ep|cid 或 cid|bvid），顺手把弹幕 id 带出去
+        const cidMatch = /(?:^|\|)(\d{5,})(?:\||$)/.exec(String(chapterPath || ''));
+        const danmakuCid = /bilibili\.com$/i.test(new URL(rule.host).hostname) && cidMatch ? cidMatch[1] : '';
         return {
           contentType: rule.contentType,
           contentDecoder: !!rule.contentDecoder,
+          danmakuCid,
           content:
             rule.contentType === ContentType.VIDEO || rule.contentType === ContentType.AUDIO
               ? playable(content[0])

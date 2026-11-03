@@ -122,3 +122,21 @@ body {
     padding: 10px;
   }
 }
+
+/* ---------- 移动端全局微调 ---------- */
+@media (max-width: 640px) {
+  :root {
+    --we-card-width: 104px;
+    --we-sidebar-width: 0px;
+  }
+  .we-card-grid {
+    gap: 12px 8px;
+  }
+  .we-section-title {
+    font-size: 14px;
+    margin: 14px 0 6px;
+  }
+  body {
+    -webkit-tap-highlight-color: transparent;
+  }
+}

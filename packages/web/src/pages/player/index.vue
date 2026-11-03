@@ -34,6 +34,19 @@
           @ended="onEnded"
           @error="onVideoError"
         ></video>
+
+        <!-- 弹幕层 -->
+        <div v-show="danmakuOn && danmakuVisible.length" class="player__danmaku">
+          <span
+            v-for="d in danmakuVisible"
+            :key="d.key"
+            class="player__danmaku-item"
+            :class="{ 'is-top': d.m === 5, 'is-bottom': d.m === 4 }"
+            :style="d.style"
+          >
+            {{ d.text }}
+          </span>
+        </div>
       </div>
 
       <div class="player__bar">
@@ -48,6 +61,9 @@
           <a-tooltip title="自动播放下一集">
             <a-switch v-model:checked="setting.data.player.autoNext" size="small" />
           </a-tooltip>
+          <a-button v-if="danmakuCid" size="small" :type="danmakuOn ? 'primary' : 'default'" @click="toggleDanmaku">
+            弹幕 {{ danmakuOn ? '开' : '关' }}
+          </a-button>
           <a-button size="small" @click="iframeMode = !iframeMode">{{ iframeMode ? '播放器模式' : '网页模式' }}</a-button>
           <a-button size="small" @click="openRaw"><ExportOutlined /></a-button>
         </a-space>
@@ -104,6 +120,65 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+
+// ---------------- 弹幕 ----------------
+const danmakuOn = ref(localStorage.getItem('we-danmaku') !== '0');
+const danmakuCid = ref('');
+const danmakuList = ref<DanmakuItem[]>([]);
+const danmakuVisible = ref<{ key: string; text: string; m: number; style: Record<string, string> }[]>([]);
+let danmakuTimer: number | null = null;
+let danmakuCursor = 0;
+let danmakuSeq = 0;
+
+function toggleDanmaku() {
+  danmakuOn.value = !danmakuOn.value;
+  localStorage.setItem('we-danmaku', danmakuOn.value ? '1' : '0');
+  if (!danmakuOn.value) danmakuVisible.value = [];
+}
+
+/** 按当前播放时间把 1 秒内的弹幕推到屏幕上 */
+function pumpDanmaku() {
+  const video = videoRef.value;
+  if (!video || !danmakuOn.value || iframeMode.value) {
+    danmakuTimer = window.setTimeout(pumpDanmaku, 300);
+    return;
+  }
+  const now = video.currentTime;
+  // 快进/回退后重新定位游标
+  if (danmakuCursor >= danmakuList.value.length || danmakuList.value[danmakuCursor].t > now + 1) {
+    danmakuCursor = 0;
+    while (danmakuCursor < danmakuList.value.length && danmakuList.value[danmakuCursor].t < now) danmakuCursor++;
+  }
+  while (danmakuCursor < danmakuList.value.length) {
+    const d = danmakuList.value[danmakuCursor];
+    if (d.t > now + 0.4) break;
+    danmakuCursor++;
+    if (d.t < now - 1) continue; // 已经过时的丢掉
+    const lane = danmakuSeq % 8;
+    const style: Record<string, string> = {
+      color: `#${d.c.toString(16).padStart(6, '0')}`,
+      top: d.m === 4 ? 'auto' : `${6 + lane * 11}%`,
+      bottom: d.m === 4 ? '8%' : 'auto',
+      animationDuration: `${Math.max(6, Math.min(12, d.text.length * 0.4 + 6))}s`
+    };
+    danmakuVisible.value.push({ key: `${danmakuSeq++}`, text: d.text, m: d.m, style });
+  }
+  // 只保留最近 60 条，避免 DOM 膨胀
+  if (danmakuVisible.value.length > 60) danmakuVisible.value = danmakuVisible.value.slice(-60);
+  danmakuTimer = window.setTimeout(pumpDanmaku, 300);
+}
+
+async function loadDanmaku(cid: string) {
+  danmakuList.value = [];
+  danmakuVisible.value = [];
+  danmakuCursor = 0;
+  danmakuCid.value = cid;
+  if (!cid) return;
+  const res = await getDanmaku(cid).catch(() => null);
+  if (res && res.code === 0 && res.data) {
+    danmakuList.value = res.data.list || [];
+  }
+}
 const road = ref('');
 const rate = ref(setting.data.player.playbackRate || 1);
 const rateOptions = [0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((v) => ({ value: v, label: `${v}x` }));
@@ -178,6 +253,7 @@ async function init(noCache = false) {
   loading.value = false;
   const url = res.code === 0 ? String(Array.isArray(res.data?.content) ? res.data.content[0] : res.data?.content || '') : '';
   playUrl.value = url;
+  if (res.code === 0) loadDanmaku(String(res.data?.danmakuCid || ''));
   if (!url) {
     errMsg.value = res.msg || '没有解析到播放地址';
     return;
@@ -273,12 +349,14 @@ function onKey(e: KeyboardEvent) {
 useBus(EVENT_CHAPTERS_BOX).on(() => episodesRef.value?.querySelector('.active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
 
 onMounted(() => {
+  pumpDanmaku();
   init();
   window.addEventListener('keydown', onKey);
 });
 onBeforeUnmount(() => {
   saveProgress();
   destroyHls();
+  if (danmakuTimer) clearTimeout(danmakuTimer);
   window.removeEventListener('keydown', onKey);
 });
 </script>
@@ -310,6 +388,45 @@ onBeforeUnmount(() => {
   height: 100%;
   border: none;
   background: #000;
+}
+.player__danmaku {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+.player__danmaku-item {
+  position: absolute;
+  left: 100%;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  animation-name: danmaku-move;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  will-change: transform;
+}
+.player__danmaku-item.is-top,
+.player__danmaku-item.is-bottom {
+  left: 50%;
+  transform: translateX(-50%);
+  animation: danmaku-fade 4s linear forwards;
+}
+@keyframes danmaku-move {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100vw - 100%));
+  }
+}
+@keyframes danmaku-fade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
 }
 .player__mask {
   position: absolute;

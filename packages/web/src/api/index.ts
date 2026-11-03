@@ -33,6 +33,8 @@ export interface ContentResult {
   contentType: number;
   contentDecoder: boolean;
   content: string | string[];
+  /** 哔哩哔哩番剧/投稿的弹幕 id（cid） */
+  danmakuCid?: string;
 }
 
 // ---------------- 规则 ----------------
@@ -203,3 +205,14 @@ export interface AppNotice {
 export const getAppInfo = () => request<AppInfo>('app/info');
 export const checkAppUpdate = (force = false) => request<UpdateInfo>('app/update-check', { force });
 export const getAppNotices = () => request<AppNotice[]>('app/notices', {}, false);
+
+// ======================= 弹幕 =======================
+
+export interface DanmakuItem {
+  t: number;
+  m: number;
+  c: number;
+  text: string;
+}
+
+export const getDanmaku = (cid: string) => request<{ cid: string; count: number; list: DanmakuItem[] }>('danmaku/list', { cid }, false);
