@@ -12,6 +12,7 @@ import { flushAll } from './db';
 import { ensureBuiltinSource, liveSourcesStore, registerLiveProxy } from './live';
 import { registerMediaProxy } from './media';
 import { startSubscriptionScheduler } from './subscription';
+import { pushLog } from './logs';
 import { startIptv, stopIptv } from './iptv';
 
 /** 打包成单文件可执行程序后 __dirname 由 CJS 提供；开发态用 import.meta.url */
@@ -39,6 +40,7 @@ export function createServer() {
         ctx.body = { code: 0, data, msg: '' };
       } catch (err) {
         const msg = friendlyMessage(err);
+        pushLog('error', route, msg);
         console.warn(`[api] ${route} 失败: ${msg}`);
         ctx.body = { code: -1, data: null, msg };
       } finally {

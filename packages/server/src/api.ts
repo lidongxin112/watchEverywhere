@@ -18,6 +18,7 @@ import { mediaProxyUrl, mediaReferer, needsMediaProxy } from './media';
 import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
+import { clearLogs, getLogs, pushLog } from './logs';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
@@ -122,6 +123,23 @@ export const routes: Record<string, Handler> = {
 
   'app/notices': () => fetchNotices(),
 
+  /** 诊断日志：版本、平台、规则数 + 最近 300 条接口错误 */
+  'app/logs': () => ({
+    generatedAt: Date.now(),
+    version: APP_VERSION,
+    platform: detectPlatform(),
+    standalone: isStandalone(),
+    node: process.version,
+    dataDir: DATA_DIR,
+    ruleCount: rulesStore.value.length,
+    logs: getLogs()
+  }),
+
+  'app/logs-clear': () => {
+    clearLogs();
+    return true;
+  },
+
   /** 下载新版本到本地并校验 sha256（不自动安装） */
   'app/update-download': async () => {
     const info = await checkUpdate(true);
@@ -223,6 +241,44 @@ export const routes: Record<string, Handler> = {
     const rule = await cmsUrlToRule(url, name);
     saveRule(rule);
     return 1;
+  },
+
+  /** 规则备份列表（导入前自动生成） */
+  'resource-rule/backups': async () => {
+    const dir = path.join(DATA_DIR, 'backups');
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => {
+        const abs = path.join(dir, f);
+        const st = fs.statSync(abs);
+        let count = 0;
+        try {
+          count = JSON.parse(fs.readFileSync(abs, 'utf8')).length;
+        } catch {
+          count = 0;
+        }
+        return { file: f, size: st.size, time: st.mtimeMs, count };
+      })
+      .sort((a, b) => b.time - a.time);
+  },
+
+  /** 从备份恢复规则（恢复前会把当前规则再备份一份） */
+  'resource-rule/restore-backup': async ({ file }) => {
+    const dir = path.join(DATA_DIR, 'backups');
+    const abs = path.join(dir, path.basename(String(file || '')));
+    if (!fs.existsSync(abs)) throw new Error('备份不存在');
+    const rules = JSON.parse(fs.readFileSync(abs, 'utf8'));
+    if (!Array.isArray(rules)) throw new Error('备份内容格式不对');
+    fs.writeFileSync(
+      path.join(dir, `rules-before-restore-${Date.now()}.json`),
+      JSON.stringify(rulesStore.value, null, 2)
+    );
+    rulesStore.set(rules);
+    cache.clear();
+    pushLog('warn', 'resource-rule/restore-backup', `从 ${file} 恢复 ${rules.length} 条规则`);
+    return rules.length;
   },
 
   'resource-rule/ping': async ({ id }) => {

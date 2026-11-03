@@ -103,7 +103,10 @@
 
     <div class="setting__group">
       <div class="setting__label">数据</div>
-      <a-button @click="onClearCache">清除解析缓存</a-button>
+      <a-space wrap>
+        <a-button @click="onClearCache">清除解析缓存</a-button>
+        <a-button :loading="exporting" @click="onExportLogs">导出诊断日志</a-button>
+      </a-space>
     </div>
 
     <div class="setting__about we-muted">watchEverywhere v{{ VERSION }} · 参考 any-reader 实现</div>
@@ -123,6 +126,7 @@ import {
   downloadAppUpdate,
   getAppInfo,
   getAppNotices,
+  getAppLogs,
   getPendingUpdate,
   type AppInfo,
   type AppNotice,
@@ -137,8 +141,27 @@ const notices = ref<AppNotice[]>([]);
 const checking = ref(false);
 const updateMsg = ref('');
 const downloading = ref(false);
+const exporting = ref(false);
 const applying = ref(false);
 const pending = ref<PendingUpdate | null>(null);
+
+async function onExportLogs() {
+  exporting.value = true;
+  const res = await getAppLogs();
+  exporting.value = false;
+  if (res.code !== 0 || !res.data) {
+    message.error(res.msg || '导出失败');
+    return;
+  }
+  const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `watchEverywhere-diag-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  message.success('已导出');
+}
 
 async function onDownload() {
   downloading.value = true;

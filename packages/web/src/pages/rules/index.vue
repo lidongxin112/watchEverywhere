@@ -10,6 +10,7 @@
             <a-menu-divider />
             <a-menu-item @click="cmsOpen = true">从资源站添加（苹果CMS）</a-menu-item>
             <a-menu-item @click="openSubscriptions">管理规则订阅</a-menu-item>
+            <a-menu-item @click="openBackups">备份与恢复</a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="editRule('')">新建规则</a-menu-item>
           </a-menu>
@@ -151,6 +152,23 @@
       </div>
     </a-drawer>
 
+    <!-- 备份与恢复 -->
+    <a-drawer v-model:open="backupOpen" title="规则备份" placement="right" :width="520">
+      <p class="we-muted" style="font-size: 12px">
+        每次导入规则前会自动备份一份；恢复前也会把当前规则再存一份，避免误操作。
+      </p>
+      <a-empty v-if="!backups.length" description="还没有备份（导入时会自动生成）" />
+      <div v-for="b in backups" :key="b.file" class="sub-item">
+        <div class="sub-item__main">
+          <div class="sub-item__name">{{ dayjs(b.time).format('MM-DD HH:mm:ss') }}</div>
+          <div class="sub-item__meta we-muted">{{ b.count }} 条规则 · {{ (b.size / 1024).toFixed(1) }} KB</div>
+        </div>
+        <a-popconfirm title="用这份备份覆盖当前规则？" ok-text="恢复" @confirm="restore(b.file)">
+          <a-button size="small" :loading="restoring === b.file">恢复</a-button>
+        </a-popconfirm>
+      </div>
+    </a-drawer>
+
     <!-- 编辑 -->
     <a-drawer v-model:open="editOpen" :title="editId ? '编辑规则' : '新建规则'" placement="right" width="min(960px, 100%)" destroy-on-close>
       <RuleInfo v-if="editOpen" :rule-id="editId" @close="onEditClose" />
@@ -164,7 +182,21 @@ import { message, Modal } from 'ant-design-vue';
 import { PlusOutlined, DownOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue';
 import { CONTENT_TYPES, contentTypeLabel, type Rule } from '@/constants';
 import dayjs from 'dayjs';
-import { batchUpdateRules, checkSubscription as apiCheckSubscription, checkAllSubscriptions as apiCheckAll, delRules, deleteSubscription, getSubscriptions, importCMS, importRules, pingRule, saveSubscription as apiSaveSubscription, type RuleSubscription } from '@/api';
+import {
+  batchUpdateRules,
+  checkAllSubscriptions as apiCheckAll,
+  checkSubscription as apiCheckSubscription,
+  delRules,
+  deleteSubscription,
+  getRuleBackups,
+  getSubscriptions,
+  importCMS,
+  importRules,
+  pingRule,
+  restoreRuleBackup,
+  saveSubscription as apiSaveSubscription,
+  type RuleSubscription
+} from '@/api';
 import { useRulesStore } from '@/stores/rules';
 import RuleInfo from '@/pages/rule-info/index.vue';
 
@@ -187,6 +219,26 @@ const subChecking = ref(false);
 const subCheckingId = ref('');
 const subscriptions = ref<RuleSubscription[]>([]);
 const subForm = reactive({ url: '', name: '', autoUpdate: true });
+
+// ---------------- 备份 ----------------
+const backupOpen = ref(false);
+const backups = ref<{ file: string; size: number; time: number; count: number }[]>([]);
+const restoring = ref('');
+
+async function openBackups() {
+  backupOpen.value = true;
+  const res = await getRuleBackups();
+  if (res.code === 0) backups.value = res.data || [];
+}
+
+async function restore(file: string) {
+  restoring.value = file;
+  const res = await restoreRuleBackup(file);
+  restoring.value = '';
+  if (res.code !== 0) return message.error(res.msg || '恢复失败');
+  message.success(`已恢复 ${res.data} 条规则`);
+  await refresh();
+}
 
 async function loadSubscriptions() {
   const res = await getSubscriptions();

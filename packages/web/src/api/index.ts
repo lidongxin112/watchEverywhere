@@ -257,3 +257,28 @@ export const saveSubscription = (data: Partial<RuleSubscription>) => request<Rul
 export const deleteSubscription = (id: string) => request('subscription/remove', { id });
 export const checkSubscription = (id: string) => request<SubscriptionCheckResult>('subscription/check', { id });
 export const checkAllSubscriptions = () => request<SubscriptionCheckResult[]>('subscription/check-all');
+
+// ======================= 备份 / 诊断 =======================
+
+export interface RuleBackup {
+  file: string;
+  size: number;
+  time: number;
+  count: number;
+}
+
+export const getRuleBackups = () => request<RuleBackup[]>('resource-rule/backups', {}, false);
+export const restoreRuleBackup = (file: string) => request<number>('resource-rule/restore-backup', { file }, false);
+
+export interface AppLogs {
+  generatedAt: number;
+  version: string;
+  platform: string;
+  standalone: boolean;
+  node: string;
+  dataDir: string;
+  ruleCount: number;
+  logs: { time: number; level: string; scope: string; message: string }[];
+}
+
+export const getAppLogs = () => request<AppLogs>('app/logs', {}, false);
