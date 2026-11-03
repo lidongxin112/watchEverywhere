@@ -145,6 +145,7 @@ async function main() {
     '--platform=node',
     '--format=cjs',
     '--target=node20',
+    `--define:__APP_VERSION__=${JSON.stringify(version)}`,
     `--outfile=${path.join(appDir, 'entry.cjs')}`,
     '--log-level=error'
   ]);

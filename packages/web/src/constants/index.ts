@@ -16,7 +16,8 @@ export function contentTypeLabel(v?: number) {
   return CONTENT_TYPES.find((e) => e.value === v)?.label || '未知';
 }
 
-export const VERSION = '0.1.0';
+declare const __APP_VERSION__: string;
+export const VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0';
 
 export interface Rule {
   id: string;

@@ -20,7 +20,28 @@ import path from 'node:path';
  * }
  */
 
-export const APP_VERSION = process.env.WE_VERSION || '0.1.0';
+declare const __APP_VERSION__: string | undefined;
+
+function readVersion(): string {
+  if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) return __APP_VERSION__;
+  if (process.env.WE_VERSION) return process.env.WE_VERSION;
+  try {
+    // 开发态：从仓库根 package.json 读
+    const here = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+    for (const rel of ['../../../package.json', '../../package.json', '../package.json', './package.json']) {
+      const file = path.resolve(here, rel);
+      if (fs.existsSync(file)) {
+        const v = JSON.parse(fs.readFileSync(file, 'utf8')).version;
+        if (v) return String(v);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return '0.0.0';
+}
+
+export const APP_VERSION = readVersion();
 export const UPDATE_URL = process.env.WE_UPDATE_URL || '';
 export const NOTICE_URL = process.env.WE_NOTICE_URL || '';
 
