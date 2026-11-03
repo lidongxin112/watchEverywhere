@@ -1038,14 +1038,17 @@ const BILI_MANGA_CHAPTERS = String.raw`@js:(() => {
   }
   return eps.map((e) => ({
     name: '第' + (e.ord || e.id) + '话' + (e.title ? ' ' + e.title : ''),
-    url: String(e.id)
+    url: String(e.id) + '|' + comicId
   }));
 })()`;
 
 const BILI_MANGA_IMAGES = String.raw`@js:(async () => {
   const account = String(cookie || '').trim();
-  const ep = String(lastResult || '').trim();
-  if (!account || !/^\d+$/.test(ep)) return [ep];
+  const raw = String(lastResult || '').trim();
+  const parts = raw.split('|');
+  const ep = parts[0];
+  const comicId = parts[1] || '';
+  if (!account || !/^\d+$/.test(ep)) return [raw];
 
   const post = async (path, payload) => {
     const body = String(await http(JSON.stringify({
@@ -1069,14 +1072,24 @@ const BILI_MANGA_IMAGES = String.raw`@js:(async () => {
   } catch (e) { images = []; }
   if (!images.length) return ['https://manga.bilibili.com/detail/mc0'];
 
-  const paths = images.map((x) => String(x.path || ''));
+  const paths = images.map((x) => String(x.path || '').replace(/^https?:\/\/[^/]+/, ''));
   let urls = [];
   try {
     const tok = await post('ImageToken', { urls: JSON.stringify(paths) });
-    urls = (tok.data || []).map((x) => String(x.url || '').replace(/^http:/, 'https:'));
+    urls = (tok.data || []).map((x) => {
+      let u = String(x.url || '');
+      if (!u && x.path) u = String(x.path);
+      if (u.indexOf('//') === 0) u = 'https:' + u;
+      else if (u.charAt(0) === '/') u = 'https://i0.hdslb.com' + u;
+      return u.replace(/^http:/, 'https:');
+    });
   } catch (e) { urls = []; }
-  if (!urls.length) return ['https://manga.bilibili.com/detail/mc0'];
-  return urls.filter(Boolean);
+  urls = urls.filter(Boolean);
+  if (!urls.length) {
+    // 取不到图（多为 Cookie 失效/未登录）时退回详情页，由内嵌页面自己处理
+    return ['https://manga.bilibili.com/detail/mc' + comicId];
+  }
+  return urls;
 })()`;
 
 const bilibiliManga = rule({

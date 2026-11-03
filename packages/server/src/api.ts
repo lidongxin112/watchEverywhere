@@ -297,6 +297,67 @@ export const routes: Record<string, Handler> = {
   },
 
   /**
+   * 诊断：哔哩哔哩漫画 Cookie 是否可用（依次打 ComicDetail → GetImageIndex → ImageToken）
+   * { "cookie": "SESSDATA=...", "comicId": 25717 }
+   */
+  'debug/bili-manga': async ({ cookie: rawCookie, comicId = 25717 }) => {
+    const cookie = String(rawCookie || '').trim();
+    if (!cookie) throw new Error('需要 SESSDATA=... 形式的 Cookie');
+    const ruleForFetch = createRule({ host: 'https://manga.bilibili.com' });
+
+    const call = async (path: string, payload: any): Promise<any> => {
+      const req = JSON.stringify({
+        url: `https://manga.bilibili.com/twirp/comic.v1.Comic/${path}?device=pc&platform=web`,
+        method: 'post',
+        headers: {
+          'content-type': 'application/json',
+          Referer: 'https://manga.bilibili.com/',
+          Origin: 'https://manga.bilibili.com',
+          Cookie: cookie
+        },
+        body: JSON.stringify(payload)
+      });
+      try {
+        const res = await fetch(parseRequest(req, ruleForFetch));
+        return JSON.parse(res.body);
+      } catch (e: any) {
+        return { code: -2, msg: `请求失败：${String(e?.message || e).slice(0, 120)}` };
+      }
+    };
+
+    const detail = await call('ComicDetail', { comic_id: Number(comicId) });
+    const episodes = (detail?.data?.episodes || []) as any[];
+    const out: any = {
+      comicId,
+      detailCode: detail?.code,
+      detailMsg: detail?.msg,
+      title: detail?.data?.title,
+      episodeCount: episodes.length,
+      episodeSample: episodes.slice(0, 3).map((e) => ({ id: e.id, ord: e.ord, title: e.title }))
+    };
+    if (detail?.code !== 0 || !episodes.length) {
+      out.hint =
+        detail?.code === 99 || detail?.code === -2
+          ? 'Cookie 无效或已过期（B 站漫画要求登录态；也可能被风控，换网络或稍后再试）'
+          : '接口返回异常';
+      return out;
+    }
+    const ep = episodes[0];
+    const idx = await call('GetImageIndex', { ep_id: Number(ep.id) });
+    const images = (idx?.data?.images || []) as any[];
+    out.imageIndexCode = idx?.code;
+    out.imageCount = images.length;
+    if (images.length) {
+      const paths = images.map((x) => String(x.path || ''));
+      const tok = await call('ImageToken', { urls: JSON.stringify(paths) });
+      const list = (tok?.data || []) as any[];
+      out.tokenCode = tok?.code;
+      out.imageSample = list.slice(0, 3).map((x) => x.url);
+    }
+    return out;
+  },
+
+  /**
    * 诊断：服务端能不能抓到某一页、能不能从中抽出图片
    * 漫画源排查用，例如：
    * { "url": "https://cn.bzmgcn.com/comic/chapter/xxx/0_0.html" }
