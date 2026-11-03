@@ -18,6 +18,7 @@ import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
+import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
 import { liveRoutes } from './live';
 import {
   chapterHistoryStore,
@@ -118,6 +119,21 @@ export const routes: Record<string, Handler> = {
   'app/update-check': ({ force } = {}) => checkUpdate(!!force),
 
   'app/notices': () => fetchNotices(),
+
+  /** 下载新版本到本地并校验 sha256（不自动安装） */
+  'app/update-download': async () => {
+    const info = await checkUpdate(true);
+    if (info.error) throw new Error(info.error);
+    if (!info.hasUpdate) throw new Error('已经是最新版本');
+    const row = await downloadUpdate(info);
+    return row;
+  },
+
+  /** 已下载待安装的更新 */
+  'app/update-pending': () => readPending(),
+
+  /** 应用更新并重启（会退出当前进程） */
+  'app/update-apply': () => applyUpdateAndRestart(),
 
   // ======================= 规则 =======================
   'resource-rule/list': () =>

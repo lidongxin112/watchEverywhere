@@ -221,6 +221,31 @@ WE_RELEASE_BASE=https://github.com/你/repo/releases/download/v0.2.0 node script
 
 暂不做「静默自动替换二进制」（涉及签名/权限，容易被系统拦），现在是「提示 + 一键下载」；如果要真·自动更新，可以在下载完成后把新文件写到 `~/.watch-everywhere/updates/`，下次启动由启动器替换，我可以再补。
 
+
+## 播放弹幕 / 规则订阅 / 合并搜索
+
+- **弹幕**：哔哩哔哩番剧、投稿自动带弹幕（`/api/danmaku/list`，B 站 XML），播放器右侧可开关，开关状态本地记忆；滚动弹幕 + 顶部/底部固定弹幕都支持
+- **规则订阅**：规则页 → 添加规则 → 「管理规则订阅」，填订阅地址（规则 JSON / eso:// / 返回它们的 URL），可设置每小时自动检查；更新时保留你本地的 `cookies` 与排序
+- **合并搜索**：搜索结果右上角开关「合并同名」，同一部作品来自多个源时合并成一行，点下面的标签切换来源
+- **移动端**：≤640px 侧边栏变底部导航（带 iPhone 安全区），播放器 ≤900px 上下布局，卡片两列
+
+## 自动更新（下载 → 校验 → 替换）
+
+设置 → 版本 → 「下载安装包」：服务端把新版本下到 `~/.watch-everywhere/updates/<version>/`，
+按清单里的 `sha256` 校验（不匹配直接标记失败并拒绝安装），然后出现「立即重启并更新」。
+
+点了之后会写一个 `apply.sh` / `apply.cmd`：等当前进程退出 → 备份旧文件（`*.bak-<旧版本>`）→ 覆盖 → 重新启动。
+日志在 `~/.watch-everywhere/updates/`。
+
+CI 里签名/公证是「有 secrets 才跑」：
+
+| secret | 作用 |
+| --- | --- |
+| `MAC_CERT_P12` / `MAC_CERT_PASSWORD` / `MAC_SIGN_IDENTITY` | Developer ID 签名（`--options runtime --timestamp`） |
+| `APPLE_ID` / `APPLE_APP_PASSWORD` / `APPLE_TEAM_ID` | `notarytool submit --wait` 公证 + `stapler` |
+
+不配置也能发版，只是产物是 ad-hoc 签名（别人首次打开要右键「打开」）。
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。

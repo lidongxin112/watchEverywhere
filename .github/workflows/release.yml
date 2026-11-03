@@ -13,6 +13,14 @@ jobs:
   # macOS 的二进制注入后必须重新签名，所以放到 mac runner 上跑
   build-mac:
     runs-on: macos-14
+    env:
+      # 没有配置这些 secrets 时，签名/公证步骤会自动跳过（产物是 ad-hoc 签名）
+      MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+      MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     strategy:
       matrix:
         platform: [mac-arm64, mac-x64]
@@ -27,6 +35,26 @@ jobs:
       - run: npm test
       - name: 打包 ${{ matrix.platform }}
         run: node scripts/build-desktop.mjs ${{ matrix.platform }}
+      - name: 签名（Developer ID，可选）
+        if: env.MAC_CERT_P12 != ''
+        run: |
+          echo "$MAC_CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k actions build.keychain
+          codesign --force --options runtime --timestamp \
+            --sign "$MAC_SIGN_IDENTITY" dist/watchEverywhere-${{ matrix.platform }}
+
+      - name: 公证（可选）
+        if: env.APPLE_ID != ''
+        run: |
+          ditto -c -k --keepParent dist/watchEverywhere-${{ matrix.platform }} /tmp/app.zip
+          xcrun notarytool submit /tmp/app.zip --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple dist/watchEverywhere-${{ matrix.platform }} || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform }}

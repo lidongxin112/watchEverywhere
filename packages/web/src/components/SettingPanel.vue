@@ -80,8 +80,17 @@
       </div>
       <div v-if="updateMsg" class="setting__update">
         <div>{{ updateMsg }}</div>
-        <a v-if="update?.url" :href="update.url" target="_blank" rel="noreferrer">下载 {{ update.latest }}</a>
         <div v-if="update?.notes" class="we-muted setting__notes">{{ update.notes }}</div>
+        <a-space v-if="update?.hasUpdate" style="margin-top: 6px" wrap>
+          <a-button size="small" type="primary" :loading="downloading" @click="onDownload">下载安装包</a-button>
+          <a v-if="update.url" :href="update.url" target="_blank" rel="noreferrer">手动下载</a>
+        </a-space>
+        <div v-if="pending" class="setting__pending">
+          已下载 v{{ pending.version }}（{{ pending.verified ? 'sha256 校验通过' : '校验失败' }}）
+          <a-button v-if="pending.verified" size="small" type="primary" danger :loading="applying" @click="onApply">
+            立即重启并更新
+          </a-button>
+        </div>
       </div>
       <div v-if="notices.length" class="setting__notice">
         <div v-for="n in notices" :key="n.id" class="setting__notice-item">
@@ -107,7 +116,19 @@ import { THEMES } from '@/constants/theme';
 import { VERSION } from '@/constants';
 import { onMounted, ref } from 'vue';
 import { useSettingStore } from '@/stores/setting';
-import { checkAppUpdate, clearCache, getAppInfo, getAppNotices, type AppInfo, type AppNotice, type UpdateInfo } from '@/api';
+import {
+  applyAppUpdate,
+  checkAppUpdate,
+  clearCache,
+  downloadAppUpdate,
+  getAppInfo,
+  getAppNotices,
+  getPendingUpdate,
+  type AppInfo,
+  type AppNotice,
+  type PendingUpdate,
+  type UpdateInfo
+} from '@/api';
 
 const setting = useSettingStore();
 const info = ref<AppInfo>();
@@ -115,6 +136,31 @@ const update = ref<UpdateInfo>();
 const notices = ref<AppNotice[]>([]);
 const checking = ref(false);
 const updateMsg = ref('');
+const downloading = ref(false);
+const applying = ref(false);
+const pending = ref<PendingUpdate | null>(null);
+
+async function onDownload() {
+  downloading.value = true;
+  const res = await downloadAppUpdate();
+  downloading.value = false;
+  if (res.code !== 0 || !res.data) {
+    updateMsg.value = `下载失败：${res.msg || '未知错误'}`;
+    return;
+  }
+  pending.value = res.data;
+  updateMsg.value = res.data.verified ? '安装包已下载并通过校验' : '安装包已下载，但 sha256 不匹配，已禁止安装';
+}
+
+async function onApply() {
+  applying.value = true;
+  const res = await applyAppUpdate();
+  if (res.code !== 0) {
+    applying.value = false;
+    updateMsg.value = `重启失败：${res.msg || '未知错误'}`;
+  }
+  // 成功后服务端会退出，页面自然断开
+}
 
 async function onCheckUpdate() {
   checking.value = true;
@@ -131,9 +177,10 @@ async function onCheckUpdate() {
 }
 
 onMounted(async () => {
-  const [a, n] = await Promise.all([getAppInfo(), getAppNotices()]);
+  const [a, n, p] = await Promise.all([getAppInfo(), getAppNotices(), getPendingUpdate()]);
   if (a.code === 0) info.value = a.data;
   if (n.code === 0 && Array.isArray(n.data)) notices.value = n.data;
+  if (p.code === 0 && p.data) pending.value = p.data;
 });
 
 async function onClearCache() {
@@ -152,6 +199,14 @@ async function onClearCache() {
   border-radius: 8px;
   background: var(--we-color-primary-bg);
   font-size: 13px;
+}
+.setting__pending {
+  margin-top: 8px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .setting__notes {
   margin-top: 4px;

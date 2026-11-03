@@ -95,6 +95,8 @@ export interface UpdateInfo {
   publishedAt?: string;
   url?: string;
   size?: number;
+  /** 安装包 sha256（清单里带就校验） */
+  sha256?: string;
   platform: Platform;
   checkedAt: number;
   error?: string;
@@ -129,7 +131,8 @@ export async function checkUpdate(force = false): Promise<UpdateInfo> {
       notes: json.notes,
       publishedAt: json.publishedAt,
       url: p.url,
-      size: p.size
+      size: p.size,
+      sha256: p.sha256
     };
     cache = { at: Date.now(), data };
     return data;

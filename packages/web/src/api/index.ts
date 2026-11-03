@@ -202,7 +202,19 @@ export interface AppNotice {
   time?: string;
 }
 
+export interface PendingUpdate {
+  version: string;
+  file: string;
+  size: number;
+  sha256: string;
+  verified: boolean;
+  downloadedAt: number;
+}
+
 export const getAppInfo = () => request<AppInfo>('app/info');
+export const downloadAppUpdate = () => request<PendingUpdate>('app/update-download', {}, false);
+export const getPendingUpdate = () => request<PendingUpdate | null>('app/update-pending', {}, false);
+export const applyAppUpdate = () => request<{ script: string; restarting: boolean }>('app/update-apply', {}, false);
 export const checkAppUpdate = (force = false) => request<UpdateInfo>('app/update-check', { force });
 export const getAppNotices = () => request<AppNotice[]>('app/notices', {}, false);
 
