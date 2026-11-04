@@ -84,6 +84,22 @@ async function alive() {
   }
 }
 
+/** 端口是否已被占用（不管上面跑的是谁） */
+async function portBusy(): Promise<boolean> {
+  const net = await import('node:net');
+  return new Promise((resolve) => {
+    const sock = net.connect({ port: status.port, host: '127.0.0.1' });
+    const done = (busy: boolean) => {
+      sock.destroy();
+      resolve(busy);
+    };
+    sock.setTimeout(600);
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false));
+    sock.once('error', () => done(false));
+  });
+}
+
 function pushLog(line: string) {
   status.logs.push(line);
   if (status.logs.length > 200) status.logs.splice(0, status.logs.length - 200);
@@ -122,6 +138,18 @@ function spawnIptv() {
     status.state = 'error';
     status.error = `iPTV 已退出（code=${code}${signal ? `, signal=${signal}` : ''}）`;
     status.restarts++;
+    // 端口被别的进程占着，重启多少次都没用，直接放弃并给出提示
+    if (/EADDRINUSE/.test(status.error) || /address already in use/.test(status.error)) {
+      status.state = 'error';
+      status.error = `端口 ${status.port} 被其他进程占用，内置 iPTV 无法启动（可以设置 WE_IPTV_PORT 换端口，或先关掉占用者）`;
+      console.warn(`${tag} ${status.error}`);
+      return;
+    }
+    if (status.restarts > 5) {
+      status.error = `iPTV 连续启动失败 ${status.restarts} 次，已停止重试（WE_DEBUG=1 看日志）`;
+      console.warn(`${tag} ${status.error}`);
+      return;
+    }
     const delay = Math.min(60, 5 * status.restarts) * 1000;
     console.warn(`${tag} ${status.error}，${delay / 1000} 秒后自动重启`);
     setTimeout(() => !stopping && spawnIptv(), delay);
@@ -168,6 +196,14 @@ export async function startIptv(ready: () => void) {
     status.state = 'error';
     status.error = '内置 iPTV 未安装，请在项目目录执行 npm run iptv:update';
     console.warn(`${tag} ${status.error}`);
+    return;
+  }
+  // 端口已被占（可能是上次残留的进程，或另一个实例）——不再硬起一个来撞端口
+  if (await portBusy()) {
+    status.mode = 'external';
+    status.state = 'running';
+    console.log(`${tag} 端口 ${status.port} 已被占用，直接沿用（如需重启请先关掉占用进程：lsof -ti:${status.port} | xargs kill）`);
+    ready();
     return;
   }
   status.mode = 'managed';
