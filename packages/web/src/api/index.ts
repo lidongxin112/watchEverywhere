@@ -339,3 +339,35 @@ export const assignFavoriteGroups = (data: { items: { ruleId: string; url: strin
   request<number>('resource-favorites/assign-groups', data, false);
 export const bulkUnstar = (items: { ruleId: string; url: string }[]) =>
   request<number>('resource-favorites/bulk-unstar', { items }, false);
+
+// ======================= 追更 =======================
+
+export interface WatchItem {
+  id: string;
+  ruleId: string;
+  url: string;
+  name: string;
+  cover?: string;
+  contentType?: number;
+  lastCount: number;
+  lastChapter?: string;
+  newCount: number;
+  lastCheck?: number;
+  lastError?: string;
+  createTime: number;
+}
+
+export interface WatchCheckRow {
+  id: string;
+  name: string;
+  newCount: number;
+  total: number;
+  error?: string;
+}
+
+export const getWatchList = () => request<WatchItem[]>('watch/list', {}, false);
+export const addWatch = (data: { ruleId: string; url: string; name: string; cover?: string; contentType?: number }) =>
+  request<WatchItem>('watch/add', data, false);
+export const removeWatch = (id: string) => request('watch/remove', { id }, false);
+export const checkWatch = (id?: string) => request<WatchCheckRow[]>('watch/check', { id }, false);
+export const clearWatchNew = (id: string) => request('watch/clear-new', { id }, false);

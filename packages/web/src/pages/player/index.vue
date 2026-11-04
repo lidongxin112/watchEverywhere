@@ -31,6 +31,7 @@
           playsinline
           @loadedmetadata="onLoaded"
           @timeupdate="onTimeUpdate"
+          @seeking="onSeeking"
           @ended="onEnded"
           @error="onVideoError"
         ></video>
@@ -72,7 +73,7 @@
         </div>
         <a-space wrap>
           <a-button size="small" :disabled="!prev" @click="go(prev)"><StepBackwardOutlined /> 上一集</a-button>
-          <a-button size="small" :disabled="!next" @click="go(next)">下一集 <StepForwardOutlined /></a-button>
+          <a-button size="small" :disabled="!next" @click="go(next, true)">下一集 <StepForwardOutlined /></a-button>
           <a-select v-model:value="rate" size="small" style="width: 84px" :options="rateOptions" />
           <a-tooltip title="自动播放下一集">
             <a-switch v-model:checked="setting.data.player.autoNext" size="small" />
@@ -140,7 +141,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 import {
   ExportOutlined,
   PictureOutlined,
@@ -160,6 +161,7 @@ import {
   type DanmakuItem
 } from '@/api';
 import { cuesFromBili, findCue, parseSubtitle, type Cue } from '@/utils/subtitle';
+import { loadSkipConfig, recordIntroSample, recordOutroSample, saveSkipConfig, suggestSkip } from '@/utils/skip-learn';
 import { useChaptersStore } from '@/stores/chapters';
 import { useSettingStore } from '@/stores/setting';
 import { useBus, EVENT_CHAPTERS_BOX } from '@/utils/bus';
@@ -555,7 +557,8 @@ function onLoaded() {
   video.volume = volume.value;
   const t = Number(q.currentTime || 0);
   const resumeFrom = setting.data.player.resume && t > 5 && (!video.duration || t < video.duration - 10) ? t : 0;
-  const intro = Number(setting.data.player.skipIntro || 0);
+  const learned = loadSkipConfig(ruleId);
+  const intro = resumeFrom ? 0 : Number(setting.data.player.skipIntro || learned.intro || 0);
   if (resumeFrom) {
     video.currentTime = resumeFrom;
     message.info(`已从上次的位置 ${formatTime(resumeFrom)} 继续播放`);
@@ -580,6 +583,42 @@ function updateBuffering() {
 }
 
 let outroSkipped = false;
+let introRecorded = false;
+function onSeeking() {
+  const v = videoRef.value;
+  if (!v || introRecorded) return;
+  const d = v.duration || 0;
+  if (!d) return;
+  // 只认“刚开始就看的那次跳转”
+  if (v.currentTime > d * 0.12) return;
+  introRecorded = true;
+  const samples = recordIntroSample(ruleId, d, v.currentTime);
+  if (samples.length >= 3) void offerSkip('intro');
+}
+
+/** 学够了就问一次要不要记住（每条规则只问一次） */
+const askedSkip = new Set<string>();
+async function offerSkip(kind: 'intro' | 'outro') {
+  const key = `${ruleId}:${kind}`;
+  if (askedSkip.has(key)) return;
+  const suggestion = suggestSkip(ruleId);
+  const value = kind === 'intro' ? suggestion.intro : suggestion.outro;
+  if (!value) return;
+  askedSkip.add(key);
+  const label = kind === 'intro' ? '片头' : '片尾';
+  Modal.confirm({
+    title: `记住这${label}吗？`,
+    content: `你最近几次都跳过了 ${value} 秒的${label}，要不要以后自动跳过？`,
+    okText: '记住',
+    cancelText: '不用',
+    onOk: () => {
+      const cfg = loadSkipConfig(ruleId);
+      saveSkipConfig(ruleId, { ...cfg, [kind]: value });
+      message.success(`已记住：${label} ${value} 秒`);
+    }
+  });
+}
+
 function onTimeUpdate() {
   updateBuffering();
   if (subtitleCues.value.length) applySubtitleText(videoRef.value?.currentTime || 0);
@@ -657,8 +696,13 @@ function onVideoError() {
   void retryOnce('视频无法播放（格式不支持或资源已失效）');
 }
 
-function go(c?: ChapterItem) {
+function go(c?: ChapterItem, recordOutro = false) {
   if (!c || c.chapterPath === chapterPath) return;
+  const v = videoRef.value;
+  if (recordOutro && v?.duration) {
+    const samples = recordOutroSample(ruleId, v.duration, v.currentTime);
+    if (samples.length >= 3) void offerSkip('outro');
+  }
   saveProgress();
   router.replace({ path: '/player', query: { ...q, chapterPath: c.chapterPath, currentTime: '0' } });
 }

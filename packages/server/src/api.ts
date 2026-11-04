@@ -22,6 +22,7 @@ import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
 import { installFromMarket, listMarket } from './market';
+import { checkWatch, createWatch, watchStore } from './watch';
 import { fetchBiliSubtitle, listBiliSubtitles } from './subtitle';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
@@ -30,6 +31,7 @@ import { liveRoutes } from './live';
 import {
   chapterHistoryStore,
   configStore,
+  getRule,
   favoritesStore,
   historyStore,
   rulesStore,
@@ -45,11 +47,6 @@ const VIDEO_TTL = 10 * 60 * 1000;
 const cache = new MemoryCache();
 const md5 = (s: string) => createHash('md5').update(String(s)).digest('hex');
 
-function getRule(ruleId: string): Rule {
-  const rule = rulesStore.value.find((e) => e.id === ruleId);
-  if (!rule) throw new Error('规则不存在');
-  return rule;
-}
 
 async function cached<T>(key: string, ttl: number, fn: () => Promise<T>, noCache = false): Promise<T> {
   if (!noCache) {
@@ -711,6 +708,23 @@ export const routes: Record<string, Handler> = {
   ...liveRoutes,
 
   // ======================= 缓存 =======================
+  // ======================= 追更 =======================
+  'watch/list': () => watchStore.value,
+  'watch/add': (data) => createWatch(data),
+  'watch/remove': ({ id }) => {
+    watchStore.set(watchStore.value.filter((w) => w.id !== id));
+    return true;
+  },
+  'watch/check': ({ id }) => checkWatch(id ? String(id) : undefined),
+  'watch/clear-new': ({ id }) => {
+    const row = watchStore.value.find((w) => w.id === id);
+    if (row) {
+      row.newCount = 0;
+      watchStore.save();
+    }
+    return true;
+  },
+
   /** 规则市场：内置索引 + 可选远程索引 */
   'market/list': () => listMarket(),
   'market/install': ({ id }) => installFromMarket(String(id || '')),

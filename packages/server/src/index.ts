@@ -12,6 +12,7 @@ import { flushAll } from './db';
 import { ensureBuiltinSource, liveSourcesStore, registerLiveProxy } from './live';
 import { registerMediaProxy } from './media';
 import { startSubscriptionScheduler } from './subscription';
+import { startWatchScheduler } from './watch';
 import { pushLog } from './logs';
 import { selfHealRules } from './self-heal';
 import { repairResources } from './repair';
@@ -55,6 +56,7 @@ export function createServer() {
   registerLiveProxy(router);
   registerMediaProxy(router);
   startSubscriptionScheduler();
+  startWatchScheduler();
 
   app.use(cors());
   app.use(bodyParser({ jsonLimit: '20mb', encoding: 'utf-8' } as any));

@@ -21,6 +21,10 @@
             <template #icon><StarFilled v-if="starred" style="color: #fadb14" /><StarOutlined v-else /></template>
             {{ starred ? '已收藏' : '收藏' }}
           </a-button>
+          <a-button :type="watching ? 'default' : 'dashed'" @click="toggleWatch">
+            <template #icon><BellOutlined /></template>
+            {{ watching ? '已追更' : '追更' }}
+          </a-button>
           <a-button :loading="chapters.loading" @click="init(true)">
             <template #icon><ReloadOutlined /></template>
             刷新
@@ -76,6 +80,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { message } from 'ant-design-vue';
 import {
   StarFilled,
   StarOutlined,
@@ -89,6 +94,7 @@ import { getChapterHistory, type ChapterHistory, type ChapterItem } from '@/api'
 import { useChaptersStore } from '@/stores/chapters';
 import { useRulesStore } from '@/stores/rules';
 import { useFavoritesStore } from '@/stores/favorites';
+import { useWatchStore } from '@/stores/watch';
 import { useHistoryStore } from '@/stores/history';
 import CoverImage from '@/components/CoverImage.vue';
 
@@ -97,6 +103,7 @@ const router = useRouter();
 const chapters = useChaptersStore();
 const rules = useRulesStore();
 const favorites = useFavoritesStore();
+const watchStore = useWatchStore();
 const history = useHistoryStore();
 
 const q = route.query as Record<string, string>;
@@ -114,6 +121,7 @@ const rule = computed(() => rules.findById(info.ruleId));
 const isVideo = computed(() => rule.value?.contentType === ContentType.VIDEO || rule.value?.contentType === ContentType.AUDIO);
 const actionWord = computed(() => (isVideo.value ? '播放' : '阅读'));
 const starred = computed(() => favorites.starred(info));
+const watching = computed(() => watchStore.has(info.ruleId, info.url));
 
 const road = ref('');
 const filterText = ref('');
@@ -167,6 +175,19 @@ function continueRead() {
 
 function toggleStar() {
   favorites.toggle({ ...info, contentType: rule.value?.contentType });
+}
+
+async function toggleWatch() {
+  const hit = watchStore.list.find((w) => w.ruleId === info.ruleId && w.url === info.url);
+  if (hit) {
+    await watchStore.remove(hit.id);
+    message.success('已取消追更');
+    return;
+  }
+  const res = await watchStore.add({ ...info, contentType: rule.value?.contentType });
+  if (res.code !== 0) return message.error(res.msg || '追更失败');
+  await watchStore.check(res.data?.id);
+  message.success('已加入追更，有新集会在首页提示');
 }
 
 watch(

@@ -3,7 +3,7 @@
     <aside class="home__nav">
       <div v-for="(nav, idx) in navs" :key="nav" :class="['home__nav-item', { active: active === idx }]" @click="active = idx">
         {{ nav }}
-        <span class="home__count">{{ idx === 0 ? favorites.list.length : history.list.length }}</span>
+        <span class="home__count">{{ idx === 0 ? favorites.list.length : idx === 1 ? watch.list.length : history.list.length }}</span>
       </div>
     </aside>
 
@@ -38,6 +38,7 @@
             <a-button type="primary" @click="router.push('/search')">去搜索</a-button>
           </a-empty>
         </div>
+
         <template v-else>
           <div v-if="!favVisible.length" class="we-center"><a-empty description="这个分组还没有内容" /></div>
           <div v-else class="we-card-grid">
@@ -52,6 +53,33 @@
             </div>
           </div>
         </template>
+      </template>
+
+      <template v-else-if="active === 1">
+        <div class="we-page-header" style="margin-bottom: 8px">
+          <div class="we-muted">
+            共 {{ watch.list.length }} 部，{{ watch.updates.length }} 部有新集
+          </div>
+          <div style="flex: 1"></div>
+          <a-button size="small" :loading="watch.loading" @click="checkAllWatch">检查更新</a-button>
+        </div>
+        <div v-if="!watch.list.length" class="we-center">
+          <a-empty description="还没有追更，在作品目录页点「追更」即可" />
+        </div>
+        <div v-else class="we-card-grid">
+          <div v-for="w in watch.list" :key="w.id" class="watch-cell">
+            <MediaCard
+              :item="{ ruleId: w.ruleId, url: w.url, name: w.name, cover: w.cover, contentType: w.contentType }"
+              show-rule
+              @open="openWatch(w)"
+            />
+            <a-tag v-if="w.newCount" color="red" class="watch-cell__badge">+{{ w.newCount }}</a-tag>
+            <div class="watch-cell__meta we-muted">
+              <span>{{ w.lastCount }} 集</span>
+              <a v-if="w.newCount" @click.stop="watch.clearNew(w.id)">标记已读</a>
+            </div>
+          </div>
+        </div>
       </template>
 
       <template v-else>
@@ -108,12 +136,14 @@ import { useRouter } from 'vue-router';
 import MediaCard from '@/components/MediaCard.vue';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useHistoryStore } from '@/stores/history';
+import { useWatchStore } from '@/stores/watch';
 import { useOpenResource } from '@/utils/navigate';
 import { message } from 'ant-design-vue';
 
 const router = useRouter();
 const favorites = useFavoritesStore();
 const history = useHistoryStore();
+const watch = useWatchStore();
 const open = useOpenResource();
 
 // ---------------- 收藏分组 / 多选 ----------------
@@ -181,20 +211,48 @@ async function removeSelected() {
   selected.value = [];
 }
 
-const navs = ['收藏', '历史'];
+const navs = ['收藏', '追更', '历史'];
 const active = ref(0);
 
 onActivated(() => {
   favorites.sync();
   favorites.syncGroups();
+  watch.sync();
   history.sync();
 });
+
+function openWatch(w: { ruleId: string; url: string; name: string; cover?: string; contentType?: number }) {
+  open({ ...w, chapter: '' } as any);
+}
+
+async function checkAllWatch() {
+  const res = await watch.check();
+  if (res.code !== 0) return message.error(res.msg || '检查失败');
+  const updates = (res.data || []).filter((r) => r.newCount > 0);
+  if (updates.length) message.success(updates.map((u) => `${u.name} +${u.newCount}`).join('，'));
+  else message.info('暂无更新');
+}
 </script>
 
 <style scoped>
 .home {
   height: 100%;
   display: flex;
+}
+.watch-cell {
+  position: relative;
+}
+.watch-cell__badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+}
+.watch-cell__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 2px 0;
 }
 .fav-cell {
   position: relative;
@@ -268,7 +326,22 @@ onActivated(() => {
   .home {
     flex-direction: column;
   }
-  .fav-cell {
+  .watch-cell {
+  position: relative;
+}
+.watch-cell__badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+}
+.watch-cell__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 2px 0;
+}
+.fav-cell {
   position: relative;
 }
 .fav-cell__check {

@@ -44,6 +44,12 @@ export const historyStore = new JsonStore<ResourceItem[]>('history', []);
 export const chapterHistoryStore = new JsonStore<ChapterHistoryItem[]>('chapter-history', []);
 export const configStore = new JsonStore<AppConfig>('config', {});
 
+export function getRule(ruleId: string): Rule {
+  const rule = rulesStore.value.find((e) => e.id === ruleId);
+  if (!rule) throw new Error('规则不存在');
+  return rule;
+}
+
 export function flushAll() {
   [rulesStore, favoritesStore, historyStore, chapterHistoryStore, configStore].forEach((s) => s.flush());
 }
