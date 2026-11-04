@@ -590,3 +590,30 @@ export const torrentStatus = (infoHash: string) =>
 export const closeTorrent = (infoHash: string) => request('torrent/close', { infoHash }, false);
 export const torrentPlayUrl = (infoHash: string, index: number) =>
   `/api/torrent/stream?hash=${encodeURIComponent(infoHash)}&index=${index}`;
+
+// ======================= 种子健康度 =======================
+
+export interface TrackerResult {
+  url: string;
+  ok: boolean;
+  seeders?: number;
+  leechers?: number;
+  completed?: number;
+  error?: string;
+  ms: number;
+}
+
+export interface TorrentHealth {
+  infohash: string;
+  ok: boolean;
+  seeders: number;
+  leechers: number;
+  completed: number;
+  trackers: TrackerResult[];
+  checkedAt: number;
+  message?: string;
+  tier: { level: 'good' | 'ok' | 'bad' | 'dead' | 'unknown'; label: string };
+}
+
+export const checkTorrentHealth = (data: { infohash: string; magnet?: string }) =>
+  request<TorrentHealth>('torrent/health', data, false);

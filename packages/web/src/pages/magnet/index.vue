@@ -70,8 +70,23 @@
           </div>
         </template>
         <template v-else-if="column.key === 'size'">{{ record.size || '-' }}</template>
+        <template v-else-if="column.key === 'health'">
+          <a-tooltip :title="healthMap[record.infohash] ? (healthMap[record.infohash].ok ? `做种 ${healthMap[record.infohash].seeders} · 下载中 ${healthMap[record.infohash].leechers}` : healthMap[record.infohash].message) : `来源统计：${record.seeders ?? '未知'} 做种`">
+            <a-tag :color="tierColor[(healthMap[record.infohash]?.tier || tierOf(record)).level]">
+              {{ (healthMap[record.infohash]?.tier || tierOf(record)).label }}
+            </a-tag>
+          </a-tooltip>
+        </template>
         <template v-else-if="column.key === 'action'">
           <a-space>
+            <a-button
+              size="small"
+              :loading="checkingHealth === record.infohash"
+              :disabled="!record.infohash"
+              @click="checkHealthOf(record)"
+            >
+              测活
+            </a-button>
             <a-button v-if="record.magnet" size="small" type="primary" @click="copy(record.magnet)">复制磁力</a-button>
             <a-button v-else size="small" :loading="resolving === record.title" @click="makeMagnet(record)">
               生成磁力
@@ -98,12 +113,14 @@ import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  checkTorrentHealth,
   openTorrent,
   probeMagnetSources,
   resolveMagnet,
   searchMagnet,
   type MagnetItem,
   type MagnetSourceProbe,
+  type TorrentHealth,
   type TorrentFileItem
 } from '@/api';
 
@@ -122,6 +139,7 @@ const pickError = ref('');
 const pickFiles = ref<TorrentFileItem[]>([]);
 const pickHash = ref('');
 const opening = ref('');
+const checkingHealth = ref('');
 
 /** 在线播放：先拿到磁力，再让服务端打开种子列文件 */
 async function playOnline(row: MagnetItem) {
@@ -197,10 +215,37 @@ function onCategoryChange() {
 }
 
 const columns = [
-  { title: '标题', key: 'title', width: 520 },
-  { title: '大小', key: 'size', width: 100 },
-  { title: '操作', key: 'action', width: 260 }
+  { title: '标题', key: 'title', width: 460 },
+  { title: '大小', key: 'size', width: 96 },
+  { title: '健康', key: 'health', width: 96 },
+  { title: '操作', key: 'action', width: 300 }
 ];
+
+/** 按做种数分档（用来源给的数据，不发请求） */
+function tierOf(item: MagnetItem) {
+  const s0 = Number(item.seeders);
+  if (!Number.isFinite(s0) || item.seeders === undefined) return { level: 'unknown', label: '未知' };
+  if (s0 >= 50) return { level: 'good', label: '优' };
+  if (s0 >= 10) return { level: 'ok', label: '良' };
+  if (s0 >= 1) return { level: 'bad', label: '差' };
+  return { level: 'dead', label: '无种子' };
+}
+
+const tierColor: Record<string, string> = { good: 'green', ok: 'blue', bad: 'orange', dead: 'red', unknown: 'default' };
+const healthMap = ref<Record<string, TorrentHealth>>({});
+
+/** 深度测活：问 tracker 要真实做种数 */
+async function checkHealthOf(item: MagnetItem) {
+  if (!item.infohash) return message.warning('这条没有 infohash');
+  const key = item.infohash;
+  checkingHealth.value = key;
+  const res = await checkTorrentHealth({ infohash: key, magnet: item.magnet });
+  checkingHealth.value = '';
+  if (res.code !== 0 || !res.data) return message.error(res.msg || '测活失败');
+  healthMap.value = { ...healthMap.value, [key]: res.data };
+  if (res.data.ok) message.success(`做种 ${res.data.seeders} · 下载中 ${res.data.leechers} · 完成 ${res.data.completed}`);
+  else message.warning(res.data.message || 'tracker 不可达');
+}
 
 const emptyHint = computed(() => {
   if (list.value.length) return '';

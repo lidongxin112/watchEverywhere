@@ -441,6 +441,29 @@ node scripts/stop.mjs --hard   # 卡死时强制 SIGKILL
 - 每个源单独限时，代理只在「代理能给的东西」上用（4 秒不通立刻退回直连）
 
 
+
+### 种子健康度
+
+磁力列表新增「健康」列（不额外请求，直接用来来源给的做种数分档）：
+
+| 分档 | 条件 |
+| --- | --- |
+| 优（绿） | ≥ 50 做种 |
+| 良（蓝） | 10 ~ 49 |
+| 差（橙） | 1 ~ 9 |
+| 无种子（红） | 0 |
+| 未知（灰） | 来源没给 seeders |
+
+每行还有「**测活**」按钮：`torrent/health` 会向种子里的 tracker（外加 5 个公共 tracker）发 **scrape** 请求，拿真实的做种/下载/完成数：
+
+- HTTP(S) tracker：`GET <tracker>/scrape?info_hash=<raw bytes>` → bencode 解析
+- UDP tracker：`dgram` 实现 connect(0) → scrape(2) 两段协议，解析 `seeders/incomplete/completed`
+- 结果缓存 10 分钟；**所有 tracker 不可达时明确显示「未知（tracker 不可达）」**，不会误报成死种
+
+> P2P 与 tracker 在部分网络下会被整体拦截（本项目开发机上就是如此：UDP/TCP 全超时）。
+> 这时健康列仍然可用（基于来源统计），测活则会如实告诉你"不可达"。
+
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。

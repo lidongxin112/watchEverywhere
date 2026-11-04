@@ -26,6 +26,7 @@ import { doubanComments } from './douban';
 import { episodeNumber } from './episode';
 import { probeSources, resolveTorrent, searchMagnet } from './magnet';
 import { closeTorrent, openTorrent, torrentStatus } from './torrent';
+import { checkHealth, healthTier } from './tracker';
 import { readProxyConfig, saveProxyConfig } from './proxy-config';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
@@ -822,6 +823,19 @@ export const routes: Record<string, Handler> = {
   'torrent/play-url': ({ infoHash, index }) => ({
     url: `/api/torrent/stream?hash=${encodeURIComponent(String(infoHash || ''))}&index=${Number(index) || 0}`
   }),
+
+  /** 种子健康度（tracker scrape，拿真实做种数） */
+  'torrent/health': async ({ infohash, magnet }) => {
+    const res = await checkHealth(String(infohash || ''), magnet ? String(magnet) : undefined);
+    return {
+      ...res,
+      // tracker 全不可达时不能说“没种子”，只能说“未知”
+      tier: res.ok ? healthTier(res.seeders) : { level: 'unknown', label: '未知（tracker 不可达）' }
+    };
+  },
+
+  /** 批量按来源给的 seeders 分档（不发请求，纯计算） */
+  'torrent/tier': ({ seeders }) => healthTier(Number(seeders)),
 
   /** 磁力源可用性 + 当前代理 */
   'magnet/sources': () => probeSources(),
