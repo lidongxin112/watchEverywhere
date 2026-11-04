@@ -57,7 +57,7 @@ export function createServer() {
   startSubscriptionScheduler();
 
   app.use(cors());
-  app.use(bodyParser({ jsonLimit: '20mb' }));
+  app.use(bodyParser({ jsonLimit: '20mb', encoding: 'utf-8' } as any));
   app.use(router.routes()).use(router.allowedMethods());
 
   // 内置资源（SEA 单文件版把前端产物编译进可执行文件里）

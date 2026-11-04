@@ -1,5 +1,5 @@
 import { DOMParser } from '@xmldom/xmldom';
-import xpathLib from 'xpath';
+import * as xpathLib from 'xpath';
 
 /**
  * 执行 XPath，返回字符串数组。
@@ -8,7 +8,9 @@ import xpathLib from 'xpath';
 export function xpath(html: string, path: string): string[] {
   const doc = new DOMParser({ onError: () => {} }).parseFromString(html || '<html></html>', 'text/html');
   // isHtml: 让不带前缀的标签名匹配 xhtml 命名空间下的元素
-  const nodes: any = xpathLib.parse(path).select({ node: doc as any, isHtml: true });
+  // xpath 的类型声明里没有 parse（运行时才有），这里绕开类型
+  const parse = (xpathLib as any).parse as (p: string) => { select: (ctx: any) => any };
+  const nodes: any = parse(path).select({ node: doc as any, isHtml: true });
   if (!Array.isArray(nodes)) return [String(nodes)];
   return nodes.map((n: any) => {
     switch (n.nodeType) {
