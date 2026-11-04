@@ -350,11 +350,30 @@ export interface WatchItem {
   cover?: string;
   contentType?: number;
   lastCount: number;
+  lastEpisode?: number;
   lastChapter?: string;
+  seenCount?: number;
+  seenEpisode?: number;
   newCount: number;
+  newEpisodes?: string[];
+  /** 指定追的线路 / 字幕组；空 = 自动 */
+  road?: string;
+  trackingRoad?: string;
+  trackingGroup?: string;
+  roads?: WatchRoad[];
+  notify?: boolean;
   lastCheck?: number;
+  lastUpdate?: number;
   lastError?: string;
   createTime: number;
+}
+
+export interface WatchRoad {
+  name: string;
+  count: number;
+  latest: number;
+  latestName: string;
+  group: string;
 }
 
 export interface WatchCheckRow {
@@ -362,6 +381,8 @@ export interface WatchCheckRow {
   name: string;
   newCount: number;
   total: number;
+  /** 这次检查新发现的集 */
+  fresh?: string[];
   error?: string;
 }
 
@@ -371,3 +392,106 @@ export const addWatch = (data: { ruleId: string; url: string; name: string; cove
 export const removeWatch = (id: string) => request('watch/remove', { id }, false);
 export const checkWatch = (id?: string) => request<WatchCheckRow[]>('watch/check', { id }, false);
 export const clearWatchNew = (id: string) => request('watch/clear-new', { id }, false);
+export const updateWatch = (data: { id: string; road?: string | null; notify?: boolean }) => request<WatchItem>('watch/update', data);
+
+// ---------------- 消息推送 ----------------
+export type NotifyChannelType = 'bark' | 'wecom' | 'feishu' | 'dingtalk' | 'webhook';
+export interface NotifyChannel {
+  id?: string;
+  type: NotifyChannelType;
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+export interface NotifyConfig {
+  channels: NotifyChannel[];
+  watchInterval: number;
+}
+export const getNotifyConfig = () => request<NotifyConfig>('notify/config/read', {}, false);
+export const saveNotifyConfig = (data: Partial<NotifyConfig>) => request<NotifyConfig>('notify/config/save', data);
+export const testNotify = (channel: NotifyChannel) => request('notify/test', { channel });
+
+// ---------------- AI 问片 ----------------
+export interface AiConfigView {
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  keyPreview: string;
+}
+export interface AiMediaHit {
+  ruleId: string;
+  rule: string;
+  contentType: number;
+  name: string;
+  url: string;
+  cover?: string;
+  author?: string;
+  chapter?: string;
+  description?: string;
+}
+export type AiChatEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'tool'; keyword: string; contentType?: string; results: AiMediaHit[] }
+  | { type: 'error'; message: string }
+  | { type: 'done' };
+
+export const getAiConfig = () => request<AiConfigView>('ai/config/read', {}, false);
+export const saveAiConfig = (data: { baseUrl: string; model: string; apiKey?: string; clearKey?: boolean }) =>
+  request<AiConfigView>('ai/config/save', data);
+export const testAi = () => request<{ reply: string; model: string }>('ai/test');
+export const getAiReview = (data: { name: string; description?: string; author?: string; force?: boolean }) =>
+  request<{ text: string; cached: boolean }>('ai/review', data);
+
+/** 流式对话：逐个回调服务端事件 */
+export async function streamAiChat(messages: { role: string; content: string }[], onEvent: (e: AiChatEvent) => void, signal?: AbortSignal) {
+  const base = (import.meta.env.VITE_API_BASE as string) || '/api';
+  const res = await fetch(`${base}/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages }),
+    signal
+  });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const line = chunk.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+      try {
+        onEvent(JSON.parse(line.slice(5).trim()));
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+// ======================= 豆瓣短评 =======================
+
+export interface DoubanComment {
+  author: string;
+  rating: number;
+  text: string;
+  votes: number;
+  time: string;
+}
+
+export interface DoubanResult {
+  ok: boolean;
+  subjectId?: string;
+  title?: string;
+  year?: string;
+  comments: DoubanComment[];
+  message?: string;
+}
+
+export const getDoubanComments = (data: { name: string; year?: string }) =>
+  request<DoubanResult>('meta/douban-comments', data, false);

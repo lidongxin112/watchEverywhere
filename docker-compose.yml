@@ -1,0 +1,16 @@
+services:
+  watch-everywhere:
+    build: .
+    image: watch-everywhere:latest
+    container_name: watch-everywhere
+    ports:
+      - "8898:8898"
+    environment:
+      - PORT=8898
+      - WE_DATA_DIR=/data
+      # 有更新服务器时填这两个
+      # - WE_UPDATE_URL=https://example.com/watchEverywhere/latest.json
+      # - WE_NOTICE_URL=https://example.com/watchEverywhere/notices.json
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

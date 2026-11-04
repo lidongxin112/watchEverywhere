@@ -62,6 +62,7 @@
           <a-tooltip :title="usingProxy ? '当前通过服务端转发' : '当前浏览器直连'">
             <a-tag :color="usingProxy ? 'green' : 'default'" class="live__tag" @click="toggleProxy">{{ usingProxy ? '转发' : '直连' }}</a-tag>
           </a-tooltip>
+          <ExternalPlayerMenu :url="playInfo?.kind === 'unsupported' ? playInfo.url : playSrc || playInfo?.url || ''" :title="current.name" />
           <a-button size="small" @click="toggleFav(current)">
             <StarFilled v-if="isFav(current)" style="color: #fadb14" />
             <StarOutlined v-else />
@@ -175,6 +176,7 @@ import {
   type StreamKind
 } from '@/api';
 import LivePlayer from '@/components/LivePlayer.vue';
+import ExternalPlayerMenu from '@/components/ExternalPlayerMenu.vue';
 import SourceManager from './SourceManager.vue';
 import { readStorage, writeStorage } from '@/utils/storage';
 

@@ -16,6 +16,7 @@ const router = createRouter({
           component: () => import('@/pages/category/index.vue'),
           meta: { keepAlive: true, title: '发现' }
         },
+        { path: 'ai', name: 'ai', component: () => import('@/pages/ai/index.vue'), meta: { keepAlive: true, title: 'AI 问片' } },
         { path: 'live', name: 'live', component: () => import('@/pages/live/index.vue'), meta: { title: '直播' } },
         { path: 'chapter', name: 'chapter', component: () => import('@/pages/chapter/index.vue'), meta: { title: '目录' } },
         { path: 'content', name: 'content', component: () => import('@/pages/content/index.vue'), meta: { title: '阅读' } },

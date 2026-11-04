@@ -66,3 +66,60 @@ export function findCue(cues: Cue[], time: number): string {
   const cue = cues[hit];
   return time >= cue.from && time <= cue.to + 0.3 ? cue.text : '';
 }
+
+/** 是否是 ASS / SSA 字幕 */
+export function isAssSubtitle(text: string, fileName = ''): boolean {
+  return /\.(ass|ssa)$/i.test(fileName) || /^\uFEFF?\s*\[Script Info\]/i.test(text);
+}
+
+function parseAssTime(s: string): number {
+  const m = /^(\d+):(\d{1,2}):(\d{1,2})(?:[.,](\d{1,3}))?$/.exec(s.trim());
+  if (!m) return NaN;
+  const [, h, mm, ss, frac = '0'] = m;
+  return Number(h) * 3600 + Number(mm) * 60 + Number(ss) + Number(frac.padEnd(3, '0').slice(0, 3)) / 1000;
+}
+
+/**
+ * ASS / SSA → 纯文本 cue（特效渲染器加载失败时的降级方案）
+ * 去掉 {\...} 特效标签，\N 换行，\h 空格
+ */
+export function parseAss(text: string): Cue[] {
+  const cues: Cue[] = [];
+  let inEvents = false;
+  let format: string[] = [];
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^\[.+\]$/.test(line)) {
+      inEvents = /^\[Events\]$/i.test(line);
+      continue;
+    }
+    if (!inEvents) continue;
+    if (/^Format\s*:/i.test(line)) {
+      format = line.replace(/^Format\s*:/i, '').split(',').map((f) => f.trim().toLowerCase());
+      continue;
+    }
+    if (!/^Dialogue\s*:/i.test(line)) continue;
+    const cols = format.length ? format : ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
+    const parts = line.replace(/^Dialogue\s*:/i, '').split(',');
+    // 最后一列 Text 里可能有逗号
+    const fields = [...parts.slice(0, cols.length - 1), parts.slice(cols.length - 1).join(',')];
+    const get = (k: string) => fields[cols.indexOf(k)] ?? '';
+    const from = parseAssTime(get('start'));
+    const to = parseAssTime(get('end'));
+    const content = get('text')
+      .replace(/\{[^}]*\}/g, '')
+      .replace(/\\[Nn]/g, '\n')
+      .replace(/\\h/g, ' ')
+      .trim();
+    if (Number.isFinite(from) && Number.isFinite(to) && content) cues.push({ from, to, text: content });
+  }
+  // 同一时间的多行（双语、多样式）合并成一条
+  cues.sort((a, b) => a.from - b.from || a.to - b.to);
+  const merged: Cue[] = [];
+  for (const c of cues) {
+    const last = merged[merged.length - 1];
+    if (last && last.from === c.from && last.to === c.to) last.text += '\n' + c.text;
+    else merged.push({ ...c });
+  }
+  return merged;
+}

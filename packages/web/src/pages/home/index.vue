@@ -61,6 +61,7 @@
             共 {{ watch.list.length }} 部，{{ watch.updates.length }} 部有新集
           </div>
           <div style="flex: 1"></div>
+          <a-button size="small" @click="watchSettingOpen = true"><BellOutlined /> 提醒设置</a-button>
           <a-button size="small" :loading="watch.loading" @click="checkAllWatch">检查更新</a-button>
         </div>
         <div v-if="!watch.list.length" class="we-center">
@@ -73,10 +74,42 @@
               show-rule
               @open="openWatch(w)"
             />
-            <a-tag v-if="w.newCount" color="red" class="watch-cell__badge">+{{ w.newCount }}</a-tag>
+            <a-tooltip v-if="w.newCount" :title="w.newEpisodes?.length ? `新增：${w.newEpisodes.join('、')}` : ''">
+              <a-tag color="red" class="watch-cell__badge">+{{ w.newCount }}</a-tag>
+            </a-tooltip>
             <div class="watch-cell__meta we-muted">
-              <span>{{ w.lastCount }} 集</span>
-              <a v-if="w.newCount" @click.stop="watch.clearNew(w.id)">标记已读</a>
+              <span class="we-ellipsis" :title="w.lastChapter">
+                <a-tooltip v-if="w.lastError" :title="`上次检查失败：${w.lastError}`"><WarningOutlined class="watch-cell__err" /></a-tooltip>
+                {{ w.lastEpisode ? `更新至第 ${w.lastEpisode} 集` : `${w.lastCount} 集` }}
+              </span>
+              <a-dropdown :trigger="['click']">
+                <a class="watch-cell__more" @click.stop><MoreOutlined /></a>
+                <template #overlay>
+                  <a-menu>
+                    <a-menu-item v-if="w.newCount" key="seen" @click="watch.clearNew(w.id)">标记已读</a-menu-item>
+                    <a-sub-menu v-if="w.roads?.length" key="road" title="追更线路">
+                      <a-menu-item key="road-auto" @click="changeRoad(w.id, null)">
+                        {{ !w.road ? '✓ ' : '' }}自动（集数最新的线路）
+                      </a-menu-item>
+                      <a-menu-item v-for="r in w.roads" :key="'road-' + r.name" @click="changeRoad(w.id, r.name)">
+                        {{ w.road === r.name ? '✓ ' : '' }}{{ r.group ? `${r.group} · ` : '' }}{{ r.name || '默认' }}
+                        <span class="we-muted">（{{ r.latest ? `第 ${r.latest} 集` : `${r.count} 集` }}）</span>
+                      </a-menu-item>
+                    </a-sub-menu>
+                    <a-menu-item key="notify" @click="watch.setNotify(w.id, w.notify === false)">
+                      {{ w.notify === false ? '开启提醒' : '关闭提醒' }}
+                    </a-menu-item>
+                    <a-menu-item key="check" @click="checkOneWatch(w.id)">立即检查</a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item key="remove" danger @click="watch.remove(w.id)">取消追更</a-menu-item>
+                  </a-menu>
+                </template>
+              </a-dropdown>
+            </div>
+            <div v-if="w.trackingGroup || w.road" class="watch-cell__group">
+              <a-tag :bordered="false" class="watch-cell__group-tag">
+                <BellOutlined v-if="w.notify !== false" /> {{ w.trackingGroup || w.trackingRoad }}
+              </a-tag>
             </div>
           </div>
         </div>
@@ -127,13 +160,18 @@
     <a-modal v-model:open="newGroupOpen" title="新建收藏分组" ok-text="创建" @ok="createGroup">
       <a-input v-model:value="newGroupName" placeholder="例如：在看 / 想补 / 神作" @press-enter="createGroup" />
     </a-modal>
+    <a-modal v-model:open="watchSettingOpen" title="追更提醒设置" :footer="null" width="720px" destroy-on-close>
+      <WatchSettings @saved="watchSettingOpen = false" />
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onActivated, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import { BellOutlined, MoreOutlined, WarningOutlined } from '@ant-design/icons-vue';
 import MediaCard from '@/components/MediaCard.vue';
+import WatchSettings from '@/components/WatchSettings.vue';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useHistoryStore } from '@/stores/history';
 import { useWatchStore } from '@/stores/watch';
@@ -141,6 +179,8 @@ import { useOpenResource } from '@/utils/navigate';
 import { message } from 'ant-design-vue';
 
 const router = useRouter();
+const route = useRoute();
+const watchSettingOpen = ref(false);
 const favorites = useFavoritesStore();
 const history = useHistoryStore();
 const watch = useWatchStore();
@@ -215,6 +255,8 @@ const navs = ['收藏', '追更', '历史'];
 const active = ref(0);
 
 onActivated(() => {
+  // 从通知点进来时直接打开追更
+  if (route.query.tab === 'watch') active.value = 1;
   favorites.sync();
   favorites.syncGroups();
   watch.sync();
@@ -223,6 +265,20 @@ onActivated(() => {
 
 function openWatch(w: { ruleId: string; url: string; name: string; cover?: string; contentType?: number }) {
   open({ ...w, chapter: '' } as any);
+}
+
+async function changeRoad(id: string, road: string | null) {
+  const res = await watch.setRoad(id, road);
+  if (res.code === 0) message.success(road ? `只追「${road || '默认'}」` : '已改为自动选择最新的线路');
+}
+
+async function checkOneWatch(id: string) {
+  const res = await watch.check(id);
+  const row = res.data?.[0];
+  if (res.code !== 0 || !row) return message.error(res.msg || '检查失败');
+  if (row.error) message.error(row.error);
+  else if (row.fresh?.length) message.success(`发现新集：${row.fresh.join('、')}`);
+  else message.info('暂无更新');
 }
 
 async function checkAllWatch() {
@@ -251,8 +307,27 @@ async function checkAllWatch() {
 .watch-cell__meta {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   padding: 2px 2px 0;
+}
+.watch-cell__more {
+  padding: 0 4px;
+  color: inherit;
+}
+.watch-cell__err {
+  color: #faad14;
+}
+.watch-cell__group {
+  margin-top: 2px;
+}
+.watch-cell__group-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  margin: 0;
 }
 .fav-cell {
   position: relative;
@@ -338,8 +413,27 @@ async function checkAllWatch() {
 .watch-cell__meta {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   padding: 2px 2px 0;
+}
+.watch-cell__more {
+  padding: 0 4px;
+  color: inherit;
+}
+.watch-cell__err {
+  color: #faad14;
+}
+.watch-cell__group {
+  margin-top: 2px;
+}
+.watch-cell__group-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  margin: 0;
 }
 .fav-cell {
   position: relative;

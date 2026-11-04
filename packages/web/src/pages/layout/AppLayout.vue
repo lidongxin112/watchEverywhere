@@ -73,7 +73,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   HomeOutlined,
@@ -87,13 +87,15 @@ import {
   SettingOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
-  UnorderedListOutlined
+  UnorderedListOutlined,
+  RobotOutlined
 } from '@ant-design/icons-vue';
 import SettingPanel from '@/components/SettingPanel.vue';
 import { checkAppUpdate, getAppNotices } from '@/api';
 import { useRulesStore } from '@/stores/rules';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useChaptersStore } from '@/stores/chapters';
+import { useWatchStore } from '@/stores/watch';
 import { useBus, EVENT_CHAPTERS_BOX } from '@/utils/bus';
 
 const tipsDismissed = ref(sessionStorage.getItem('we-tips-dismissed') === '1');
@@ -130,6 +132,7 @@ const navs = [
   { icon: ReadOutlined, path: '/category/1', title: '小说' },
   { icon: PictureOutlined, path: '/category/0', title: '漫画' },
   { icon: CustomerServiceOutlined, path: '/category/3', title: '音频' },
+  { icon: RobotOutlined, path: '/ai', title: 'AI' },
   { icon: AppstoreAddOutlined, path: '/rules', title: '规则' }
 ];
 
@@ -154,11 +157,19 @@ watch(
   }
 );
 
+// 定时同步追更状态：服务端检查到新集后，页面开着时弹浏览器通知
+const watchStore = useWatchStore();
+let watchTimer: number | undefined;
+
 onMounted(() => {
   loadTips();
   rules.sync();
   favorites.sync();
+  watchStore.sync();
+  watchTimer = window.setInterval(() => watchStore.sync(), 5 * 60_000);
 });
+
+onBeforeUnmount(() => window.clearInterval(watchTimer));
 </script>
 
 <style scoped>

@@ -49,8 +49,10 @@
           </div>
         </div>
 
-        <!-- 字幕层 -->
+        <!-- 字幕层：ASS 特效字幕由 assjs 渲染到这个容器，其余格式走纯文本 -->
+        <div v-show="assOn" ref="assRef" class="player__ass"></div>
         <div v-if="subtitleText" class="player__subtitle">{{ subtitleText }}</div>
+        <div v-if="adTip" class="player__adtip">{{ adTip }}</div>
 
         <!-- 弹幕层 -->
         <div v-show="danmakuOn && danmakuVisible.length" class="player__danmaku">
@@ -82,21 +84,21 @@
             弹幕 {{ danmakuOn ? '开' : '关' }}
           </a-button>
           <a-dropdown>
-            <a-button size="small" :type="subtitleCues.length ? 'primary' : 'default'">
+            <a-button size="small" :type="subtitleCues.length || assOn ? 'primary' : 'default'">
               字幕{{ subtitleName ? ' · ' + subtitleName : '' }}
             </a-button>
             <template #overlay>
               <a-menu>
-                <a-menu-item key="local" @click="pickSubtitle">加载本地字幕（.srt / .vtt）</a-menu-item>
+                <a-menu-item key="local" @click="pickSubtitle">加载本地字幕（.srt / .vtt / .ass / .ssa）</a-menu-item>
                 <a-menu-item key="bili" @click="loadBiliSubtitle">从 B 站获取 CC 字幕</a-menu-item>
-                <a-menu-item v-if="subtitleCues.length" key="delay-" @click="shiftSubtitle(-0.5)">字幕延后 0.5s</a-menu-item>
-                <a-menu-item v-if="subtitleCues.length" key="delay+" @click="shiftSubtitle(0.5)">字幕提前 0.5s</a-menu-item>
-                <a-menu-divider v-if="subtitleCues.length" />
-                <a-menu-item v-if="subtitleCues.length" key="off" @click="clearSubtitle">关闭字幕</a-menu-item>
+                <a-menu-item v-if="hasSubtitle" key="delay-" @click="shiftSubtitle(-0.5)">字幕延后 0.5s</a-menu-item>
+                <a-menu-item v-if="hasSubtitle" key="delay+" @click="shiftSubtitle(0.5)">字幕提前 0.5s</a-menu-item>
+                <a-menu-divider v-if="hasSubtitle" />
+                <a-menu-item v-if="hasSubtitle" key="off" @click="clearSubtitle">关闭字幕</a-menu-item>
               </a-menu>
             </template>
           </a-dropdown>
-          <input ref="subFileRef" type="file" accept=".srt,.vtt,text/plain" style="display: none" @change="onSubtitleFile" />
+          <input ref="subFileRef" type="file" accept=".srt,.vtt,.ass,.ssa,text/plain" style="display: none" @change="onSubtitleFile" />
           <a-tooltip title="画中画（小窗播放）">
             <a-button size="small" :disabled="iframeMode || !playUrl" @click="togglePip"><PictureOutlined /></a-button>
           </a-tooltip>
@@ -104,7 +106,7 @@
             <a-button size="small">快捷键</a-button>
           </a-tooltip>
           <a-button size="small" @click="iframeMode = !iframeMode">{{ iframeMode ? '播放器模式' : '网页模式' }}</a-button>
-          <a-button size="small" @click="openRaw"><ExportOutlined /></a-button>
+          <ExternalPlayerMenu :url="playUrl" :title="`${name} ${current?.name || ''}`.trim()" />
         </a-space>
       </div>
     </section>
@@ -143,7 +145,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { message, Modal } from 'ant-design-vue';
 import {
-  ExportOutlined,
   PictureOutlined,
   PlayCircleOutlined,
   StepBackwardOutlined,
@@ -160,7 +161,9 @@ import {
   type ChapterItem,
   type DanmakuItem
 } from '@/api';
-import { cuesFromBili, findCue, parseSubtitle, type Cue } from '@/utils/subtitle';
+import { cuesFromBili, findCue, isAssSubtitle, parseAss, parseSubtitle, type Cue } from '@/utils/subtitle';
+import { createAdFilterLoader } from '@/utils/hls-adloader';
+import ExternalPlayerMenu from '@/components/ExternalPlayerMenu.vue';
 import { loadSkipConfig, recordIntroSample, recordOutroSample, saveSkipConfig, suggestSkip } from '@/utils/skip-learn';
 import { useChaptersStore } from '@/stores/chapters';
 import { useSettingStore } from '@/stores/setting';
@@ -188,12 +191,60 @@ const subtitleText = ref('');
 const subtitleDelay = ref(0);
 const SUB_KEY = () => `we-sub:${ruleId}:${chapterPath}`;
 
+// ASS / SSA 特效字幕
+const assRef = ref<HTMLElement>();
+const assOn = ref(false);
+let assText = '';
+let assInstance: any = null;
+const hasSubtitle = computed(() => subtitleCues.value.length > 0 || assOn.value);
+
+function destroyAss() {
+  try {
+    assInstance?.destroy?.();
+  } catch {
+    /* ignore */
+  }
+  assInstance = null;
+  assOn.value = false;
+  if (assRef.value) assRef.value.innerHTML = '';
+}
+
+/** 用 assjs 渲染特效；失败时降级成纯文本 */
+async function loadAss(text: string, label: string, quiet = false) {
+  destroyAss();
+  subtitleCues.value = [];
+  subtitleText.value = '';
+  assText = text;
+  subtitleName.value = label;
+  await nextTick();
+  try {
+    if (!videoRef.value || !assRef.value) throw new Error('播放器未就绪');
+    const { default: ASS } = await import('assjs');
+    assInstance = new (ASS as any)(text, videoRef.value, { container: assRef.value, resampling: 'video_width' });
+    assInstance.delay = -subtitleDelay.value;
+    assOn.value = true;
+    if (!quiet) message.success('已加载 ASS 特效字幕');
+  } catch (e: any) {
+    assText = '';
+    subtitleCues.value = parseAss(text);
+    if (!quiet) {
+      if (subtitleCues.value.length) message.warning(`特效渲染失败（${e?.message || e}），已按纯文本显示`);
+      else message.error('没解析出字幕内容');
+    }
+  }
+}
+
 function applySubtitleText(time: number) {
   subtitleText.value = findCue(subtitleCues.value, time + subtitleDelay.value);
 }
 
 function persistSubtitle() {
   try {
+    if (assOn.value && assText) {
+      // ASS 存原文（超过 1.5MB 就不存了）
+      if (assText.length < 1.5 * 1024 * 1024) localStorage.setItem(SUB_KEY(), JSON.stringify({ name: subtitleName.value, ass: assText }));
+      return;
+    }
     if (!subtitleCues.value.length) localStorage.removeItem(SUB_KEY());
     else
       localStorage.setItem(
@@ -210,6 +261,10 @@ function restoreSubtitle() {
     const raw = localStorage.getItem(SUB_KEY());
     if (!raw) return;
     const row = JSON.parse(raw);
+    if (typeof row?.ass === 'string' && row.ass) {
+      void loadAss(row.ass, row.name || 'ASS 字幕', true);
+      return;
+    }
     if (Array.isArray(row?.cues) && row.cues.length) {
       subtitleCues.value = row.cues;
       subtitleName.value = row.name || '本地字幕';
@@ -228,9 +283,17 @@ async function onSubtitleFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
   const text = await file.text();
+  (e.target as HTMLInputElement).value = '';
+  subtitleDelay.value = 0;
+  if (isAssSubtitle(text, file.name)) {
+    await loadAss(text, file.name.replace(/\.(ass|ssa)$/i, ''));
+    persistSubtitle();
+    return;
+  }
+  destroyAss();
   const cues = parseSubtitle(text);
   if (!cues.length) {
-    message.warning('没解析出字幕，确认是 .srt 或 .vtt');
+    message.warning('没解析出字幕，确认是 .srt / .vtt / .ass 格式');
     return;
   }
   subtitleCues.value = cues;
@@ -251,6 +314,7 @@ async function loadBiliSubtitle() {
   const first = list[0];
   const content = await fetchBiliSubtitle(first.url);
   if (content.code !== 0 || !content.data?.length) return message.error(content.msg || '字幕内容为空');
+  destroyAss();
   subtitleCues.value = cuesFromBili(content.data as any);
   subtitleName.value = first.lan_doc || first.lan;
   subtitleDelay.value = 0;
@@ -260,10 +324,14 @@ async function loadBiliSubtitle() {
 
 function shiftSubtitle(delta: number) {
   subtitleDelay.value += delta;
+  // assjs 的 delay：正数表示字幕更晚出现，和这里的方向相反
+  if (assInstance) assInstance.delay = -subtitleDelay.value;
   subtitleText.value = findCue(subtitleCues.value, (videoRef.value?.currentTime || 0) + subtitleDelay.value);
 }
 
 function clearSubtitle() {
+  destroyAss();
+  assText = '';
   subtitleCues.value = [];
   subtitleName.value = '';
   subtitleText.value = '';
@@ -499,14 +567,36 @@ function probeUrl(url: string) {
   }
 }
 
+// ---------------- 智能去广告 ----------------
+const adTip = ref('');
+let adTipTimer: number | null = null;
+let adReported = 0;
+
+function onAdsFiltered(r: { removed: number; removedDuration: number }) {
+  // 直播 / 分段清单会反复加载，同一集只提示一次
+  adReported += r.removed;
+  if (adTip.value) return;
+  void adReported;
+  adTip.value = `已跳过 ${r.removed} 段广告（约 ${Math.round(r.removedDuration)} 秒）`;
+  if (adTipTimer) clearTimeout(adTipTimer);
+  adTipTimer = window.setTimeout(() => (adTip.value = ''), 4000);
+  void postClientLog({ level: 'info', scope: 'adfilter', message: adTip.value, extra: { playUrl: playUrl.value, ruleId } });
+}
+
 async function play(url: string) {
   const video = videoRef.value!;
   destroyHls();
   const isM3u8 = /\.m3u8(\?|#|$)/i.test(probeUrl(url)) || /m3u8/i.test(url);
-  if (isM3u8 && !video.canPlayType('application/vnd.apple.mpegurl')) {
+  const adFilter = setting.data.player.adFilter !== false;
+  // 开了去广告时优先用 hls.js（Safari 原生 HLS 没法改写清单）
+  if (isM3u8 && (adFilter || !video.canPlayType('application/vnd.apple.mpegurl'))) {
     const { default: HlsLib } = await import('hls.js');
     if (HlsLib.isSupported()) {
-      hls = new HlsLib({ maxBufferLength: 60 });
+      adReported = 0;
+      hls = new HlsLib({
+        maxBufferLength: 60,
+        ...(adFilter ? { pLoader: createAdFilterLoader(HlsLib, setting.data.player.adPatterns || '', onAdsFiltered) as any } : {})
+      });
       hls.on(HlsLib.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         if (data.type === HlsLib.ErrorTypes.MEDIA_ERROR) {
@@ -813,7 +903,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'ArrowLeft' && !e.shiftKey) video.currentTime -= 10;
   else if (e.key === 'ArrowRight' && e.shiftKey) go(next.value);
   else if (e.key === 'ArrowLeft' && e.shiftKey) go(prev.value);
-  else if (e.key === 'f' || e.key === 'F') video.requestFullscreen?.();
+  else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
   else if (e.key === 'm' || e.key === 'M') video.muted = !video.muted;
   else if (e.key === 'ArrowUp') {
     e.preventDefault();
@@ -821,6 +911,22 @@ function onKey(e: KeyboardEvent) {
   } else if (e.key === 'ArrowDown') {
     e.preventDefault();
     volume.value = Math.max(0, Math.round((video.volume - 0.1) * 10) / 10);
+  }
+}
+
+/** 全屏整个播放区（视频 + 字幕 + 弹幕），否则字幕和弹幕在全屏时看不到 */
+function toggleFullscreen() {
+  const stage = videoRef.value?.parentElement;
+  if (document.fullscreenElement) void document.exitFullscreen();
+  else if (stage?.requestFullscreen) void stage.requestFullscreen();
+  else videoRef.value?.requestFullscreen?.();
+}
+
+function onResize() {
+  try {
+    assInstance?.resize?.();
+  } catch {
+    /* ignore */
   }
 }
 
@@ -833,10 +939,16 @@ onMounted(() => {
   pumpDanmaku();
   init();
   window.addEventListener('keydown', onKey);
+  window.addEventListener('resize', onResize);
+  document.addEventListener('fullscreenchange', onResize);
 });
 onBeforeUnmount(() => {
   saveProgress();
   destroyHls();
+  destroyAss();
+  if (adTipTimer) clearTimeout(adTipTimer);
+  window.removeEventListener('resize', onResize);
+  document.removeEventListener('fullscreenchange', onResize);
   if (danmakuTimer) clearTimeout(danmakuTimer);
   if (stallTimer) clearTimeout(stallTimer);
   window.removeEventListener('keydown', onKey);
@@ -908,6 +1020,25 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border-radius: 6px;
   pointer-events: auto;
+}
+.player__ass {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  overflow: hidden;
+}
+.player__adtip {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 6;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  pointer-events: none;
 }
 .player__subtitle {
   position: absolute;

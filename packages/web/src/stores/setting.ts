@@ -27,6 +27,10 @@ export interface PlayerSetting {
   skipIntro?: number;
   /** 跳过片尾（秒，0 表示不跳） */
   skipOutro?: number;
+  /** 智能去广告（过滤 m3u8 里插播的广告分片） */
+  adFilter?: boolean;
+  /** 自定义去广告规则：分片地址正则，每行一条 */
+  adPatterns?: string;
 }
 
 export interface SettingData {
@@ -52,7 +56,9 @@ const DEFAULTS: SettingData = {
     playbackRate: 1,
     volume: 1,
     skipIntro: 0,
-    skipOutro: 0
+    skipOutro: 0,
+    adFilter: true,
+    adPatterns: ''
   }
 };
 

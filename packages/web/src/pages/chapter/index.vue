@@ -33,7 +33,34 @@
             <template #icon><SwapOutlined /></template>
             {{ reversed ? '倒序' : '正序' }}
           </a-button>
+          <a-button @click="openReview(false)">
+            <template #icon><RobotOutlined /></template>
+            AI 影评
+          </a-button>
         </a-space>
+      </div>
+    </div>
+
+    <!-- 豆瓣短评 -->
+    <div v-if="douban.open" class="chapter__douban">
+      <div class="we-section-title">
+        豆瓣短评
+        <span v-if="douban.title" class="we-muted" style="font-weight: 400; font-size: 12px">
+          {{ douban.title }} {{ douban.year }}
+        </span>
+        <a-spin v-if="douban.loading" size="small" style="margin-left: 8px" />
+      </div>
+      <div v-if="douban.error" class="we-muted" style="font-size: 12px">{{ douban.error }}</div>
+      <a-empty v-else-if="!douban.loading && !douban.comments.length" :description="douban.message || '暂无短评'" />
+      <div v-else class="chapter__douban-list">
+        <div v-for="(c, i) in douban.comments" :key="i" class="chapter__douban-item">
+          <div class="chapter__douban-head">
+            <b>{{ c.author }}</b>
+            <a-rate :value="c.rating" disabled allow-half style="font-size: 12px" />
+            <span class="we-muted">{{ c.time }}</span>
+          </div>
+          <div class="chapter__douban-text">{{ c.text }}</div>
+        </div>
       </div>
     </div>
 
@@ -74,6 +101,24 @@
         {{ item.name || '未命名' }}
       </div>
     </div>
+    <a-modal v-model:open="reviewOpen" :title="`AI 影评 · ${info.name}`" :footer="null" width="560px">
+      <div v-if="reviewLoading" class="we-center" style="min-height: 120px"><a-spin tip="AI 正在写影评..." /></div>
+      <a-result v-else-if="reviewError" status="warning" :title="reviewError">
+        <template #extra>
+          <a-space>
+            <a-button @click="openReview(true)">重试</a-button>
+            <a-button type="primary" @click="router.push('/ai')">去配置 AI</a-button>
+          </a-space>
+        </template>
+      </a-result>
+      <template v-else>
+        <div class="chapter__review">{{ reviewText }}</div>
+        <div class="chapter__review-foot we-muted">
+          <span>内容由 AI 生成，仅供参考</span>
+          <a @click="openReview(true)">换一篇</a>
+        </div>
+      </template>
+    </a-modal>
   </div>
 </template>
 
@@ -87,14 +132,17 @@ import {
   ReloadOutlined,
   SearchOutlined,
   CaretRightOutlined,
-  SwapOutlined
+  SwapOutlined,
+  BellOutlined,
+  RobotOutlined
 } from '@ant-design/icons-vue';
 import { ContentType, contentTypeLabel } from '@/constants';
-import { getChapterHistory, type ChapterHistory, type ChapterItem } from '@/api';
+import { getAiReview, getChapterHistory, type ChapterHistory, type ChapterItem } from '@/api';
 import { useChaptersStore } from '@/stores/chapters';
 import { useRulesStore } from '@/stores/rules';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useWatchStore } from '@/stores/watch';
+import { getDoubanComments } from '@/api';
 import { useHistoryStore } from '@/stores/history';
 import CoverImage from '@/components/CoverImage.vue';
 
@@ -122,6 +170,45 @@ const isVideo = computed(() => rule.value?.contentType === ContentType.VIDEO || 
 const actionWord = computed(() => (isVideo.value ? '播放' : '阅读'));
 const starred = computed(() => favorites.starred(info));
 const watching = computed(() => watchStore.has(info.ruleId, info.url));
+
+// ---------------- 豆瓣短评 ----------------
+const douban = ref<{ open: boolean; loading: boolean; error: string; message: string; title: string; year: string; comments: any[] }>(
+  { open: true, loading: false, error: '', message: '', title: '', year: '', comments: [] }
+);
+let doubanLoaded = false;
+
+async function loadDouban() {
+  if (doubanLoaded || !info.name || douban.value.loading) return;
+  doubanLoaded = true;
+  douban.value.loading = true;
+  const res = await getDoubanComments({ name: info.name });
+  douban.value.loading = false;
+  if (res.code !== 0 || !res.data) {
+    douban.value.error = res.msg || '获取失败';
+    return;
+  }
+  douban.value.comments = res.data.comments || [];
+  douban.value.message = res.data.message || '';
+  douban.value.title = res.data.title || '';
+  douban.value.year = res.data.year || '';
+}
+
+// ---------------- AI 影评 ----------------
+const reviewOpen = ref(false);
+const reviewText = ref('');
+const reviewLoading = ref(false);
+const reviewError = ref('');
+
+async function openReview(force: boolean) {
+  reviewOpen.value = true;
+  if (reviewText.value && !force) return;
+  reviewLoading.value = true;
+  reviewError.value = '';
+  const res = await getAiReview({ name: info.name, description: info.description, author: info.author, force });
+  reviewLoading.value = false;
+  if (res.code === 0) reviewText.value = res.data.text;
+  else reviewError.value = res.msg || '生成失败';
+}
 
 const road = ref('');
 const filterText = ref('');
@@ -197,12 +284,37 @@ watch(
 );
 
 onMounted(() => {
+  void loadDouban();
   if (info.ruleId && info.url)
     history.add({ ...info, contentType: rule.value?.contentType });
 });
 </script>
 
 <style scoped>
+.chapter__douban {
+  margin-top: 18px;
+}
+.chapter__douban-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px 16px;
+}
+.chapter__douban-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--we-color-primary-bg);
+}
+.chapter__douban-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.chapter__douban-text {
+  font-size: 13px;
+  line-height: 1.6;
+}
 .chapter {
   max-width: 1100px;
   margin: 0 auto;
@@ -249,6 +361,16 @@ onMounted(() => {
 }
 .chapter__actions {
   margin-top: auto;
+}
+.chapter__review {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+.chapter__review-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 12px;
+  font-size: 12px;
 }
 .chapter__roads {
   display: flex;

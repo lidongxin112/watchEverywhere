@@ -75,6 +75,21 @@
         <span>跳过片尾</span>
         <a-input-number v-model:value="setting.data.player.skipOutro" :min="0" :max="600" size="small" style="width: 96px" addon-after="秒" />
       </div>
+      <div class="setting__row">
+        <span>智能去广告</span>
+        <a-switch v-model:checked="setting.data.player.adFilter" />
+      </div>
+      <div v-if="setting.data.player.adFilter" class="setting__ad">
+        <div class="we-muted setting__ad-tip">
+          自动识别并跳过 m3u8 视频中插播的广告片段。还有漏网的广告，可以在下面补充规则：分片地址的正则，每行一条，# 开头为注释。
+        </div>
+        <a-textarea
+          v-model:value="setting.data.player.adPatterns"
+          :auto-size="{ minRows: 2, maxRows: 6 }"
+          placeholder="例如：&#10;/ad_\d+\.ts&#10;promo"
+          class="setting__ad-input"
+        />
+      </div>
     </div>
 
 
@@ -312,6 +327,17 @@ async function onClearCache() {
   padding: 0;
   background: none;
   cursor: pointer;
+}
+.setting__ad {
+  margin: 4px 0 8px;
+}
+.setting__ad-tip {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.setting__ad-input {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
 }
 .setting__about {
   font-size: 12px;

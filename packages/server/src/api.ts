@@ -22,7 +22,10 @@ import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
 import { installFromMarket, listMarket } from './market';
-import { checkWatch, createWatch, watchStore } from './watch';
+import { doubanComments } from './douban';
+import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
+import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
+import { aiRoutes } from './ai';
 import { fetchBiliSubtitle, listBiliSubtitles } from './subtitle';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
@@ -719,11 +722,33 @@ export const routes: Record<string, Handler> = {
   'watch/clear-new': ({ id }) => {
     const row = watchStore.value.find((w) => w.id === id);
     if (row) {
-      row.newCount = 0;
+      markSeen(row);
       watchStore.save();
     }
     return true;
   },
+  /** 指定追的线路 / 字幕组、开关提醒 */
+  'watch/update': (data) => updateWatch(data),
+
+  // ======================= 消息推送 =======================
+  'notify/config/read': () => getNotifyConfig(),
+  'notify/config/save': (data) => {
+    const cfg = saveNotifyConfig(data || {});
+    rescheduleWatch();
+    return cfg;
+  },
+  /** 发一条测试消息（可以测还没保存的渠道） */
+  'notify/test': async ({ channel }: { channel: NotifyChannel }) => {
+    if (!channel || !/^https?:\/\//i.test(String(channel.url || ''))) throw new Error('请填写正确的推送地址');
+    await sendTo(channel, { title: '测试消息', body: '收到这条消息说明追更提醒配置成功' });
+    return true;
+  },
+
+  // ======================= AI 问片 =======================
+  ...aiRoutes,
+
+  /** 豆瓣短评（按片名找 subject 再取热门短评） */
+  'meta/douban-comments': ({ name, year }) => doubanComments(String(name || ''), year ? String(year) : undefined),
 
   /** 规则市场：内置索引 + 可选远程索引 */
   'market/list': () => listMarket(),
