@@ -118,7 +118,7 @@
       <div v-if="chapters.roads.length > 1" class="player__roads">
         <a-tooltip v-for="r in sortedRoads" :key="r" :title="roadHint(r)">
           <div :class="['we-chip', { active: road === r, 'is-bad': isBadRoad(r) }]" @click="road = r">
-            {{ r || '默认' }}<span v-if="isBadRoad(r)" class="player__road-bad">!</span>
+            {{ r || '默认' }}{{ roadLabel(r) }}<span v-if="isBadRoad(r)" class="player__road-bad">!</span>
           </div>
         </a-tooltip>
       </div>
@@ -272,7 +272,17 @@ function clearSubtitle() {
 }
 
 // ---------------- 线路可用性记忆 ----------------
-const roadStat = ref<Record<string, { ok: number; fail: number; lastFail: number }>>({});
+interface RoadStat {
+  ok: number;
+  fail: number;
+  lastFail: number;
+  /** 画面高度（从 m3u8 的 RESOLUTION 里读） */
+  height?: number;
+  bandwidth?: number;
+  /** 拉流耗时（毫秒） */
+  ms?: number;
+}
+const roadStat = ref<Record<string, RoadStat>>({});
 const roadKey = (id: string) => `we-roadstat:${id}`;
 
 function loadRoadStat(id: string) {
@@ -310,15 +320,75 @@ function isBadRoad(name: string) {
   return s.fail > s.ok * 2 && Date.now() - s.lastFail < 30 * 60_000;
 }
 
+function roadLabel(name: string) {
+  const h = roadStat.value[name || '默认']?.height;
+  if (!h) return '';
+  return ` · ${h >= 2000 ? '2K' : h >= 1000 ? '1080P' : h >= 700 ? '720P' : `${h}P`}`;
+}
+
 function roadHint(name: string) {
   const s = roadStat.value[name || '默认'];
   if (!s) return '还没有播放记录';
-  return `成功 ${s.ok} 次 / 失败 ${s.fail} 次`;
+  const parts = [`成功 ${s.ok} 次`, `失败 ${s.fail} 次`];
+  if (s.height) parts.push(`分辨率 ${s.height}P`);
+  if (s.bandwidth) parts.push(`码率 ${Math.round(s.bandwidth / 1000)}kbps`);
+  if (s.ms) parts.push(`拉流 ${s.ms}ms`);
+  return parts.join(' / ');
 }
 
-const sortedRoads = computed(() =>
-  [...chapters.roads].sort((a, b) => Number(isBadRoad(a)) - Number(isBadRoad(b)))
-);
+/** 解析 m3u8 主清单里的清晰度；不是主清单就返回 undefined */
+function parseVariant(text: string): { height: number; bandwidth: number } | undefined {
+  if (!text.includes('#EXT-X-STREAM-INF')) return undefined;
+  let best: { height: number; bandwidth: number } | undefined;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+    const bw = Number(/BANDWIDTH=(\d+)/.exec(line)?.[1] || 0);
+    const res = /RESOLUTION=(\d+)x(\d+)/.exec(line);
+    const height = res ? Number(res[2]) : 0;
+    if (!best || height > best.height || (height === best.height && bw > best.bandwidth)) best = { height, bandwidth: bw };
+  }
+  return best;
+}
+
+/** 拉一次清单，记下这条线路的清晰度和耗时 */
+async function probeRoadQuality(url: string) {
+  if (!/m3u8|\.m3u/i.test(url)) return;
+  const name = road.value || '默认';
+  const started = Date.now();
+  try {
+    const text = await (await fetch(url)).text();
+    const ms = Date.now() - started;
+    const v = parseVariant(text);
+    const cur = roadStat.value[name] || { ok: 0, fail: 0, lastFail: 0 };
+    roadStat.value = { ...roadStat.value, [name]: { ...cur, height: v?.height || cur.height, bandwidth: v?.bandwidth || cur.bandwidth, ms } };
+    saveRoadStat();
+  } catch {
+    /* 探测失败不影响播放 */
+  }
+}
+
+const sortedRoads = computed(() => {
+  const score = (name: string) => {
+    const s = roadStat.value[name || '默认'];
+    const bad = isBadRoad(name) ? 1 : 0;
+    const height = s?.height || 0;
+    const ms = s?.ms || 9999;
+    return { bad, height, ms };
+  };
+  return [...chapters.roads].sort((a, b) => {
+    const x = score(a);
+    const y = score(b);
+    if (x.bad !== y.bad) return x.bad - y.bad;
+    if (x.height !== y.height) return y.height - x.height;
+    return x.ms - y.ms;
+  });
+});
+
+/** 打开剧集时，如果当前线路被判坏，自动换成最优线路 */
+function pickBestRoad(): string {
+  const good = sortedRoads.value.filter((r) => !isBadRoad(r));
+  return good[0] || chapters.roads[0] || '';
+}
 
 const needTap = ref(false);
 const buffering = ref(false);
@@ -479,13 +549,15 @@ async function init(noCache = false) {
   const list = await chapters.load(ruleId, filePath);
   chapters.title = [name, current.value?.name].filter(Boolean).join(' · ');
   document.title = `${chapters.title} - watchEverywhere`;
-  road.value = current.value?.road ?? list[0]?.road ?? '';
+  const initialRoad = current.value?.road ?? list[0]?.road ?? '';
+  road.value = isBadRoad(initialRoad) ? pickBestRoad() : initialRoad;
   nextTick(() => episodesRef.value?.querySelector('.active')?.scrollIntoView({ block: 'center' }));
 
   const res = await getContent({ ruleId, filePath, chapterPath, noCache });
   loading.value = false;
   const url = res.code === 0 ? String(Array.isArray(res.data?.content) ? res.data.content[0] : res.data?.content || '') : '';
   playUrl.value = url;
+  if (url) void probeRoadQuality(url);
   if (res.code === 0) loadDanmaku(String(res.data?.danmakuCid || ''));
   if (!url) {
     errMsg.value = res.msg || '没有解析到播放地址';
