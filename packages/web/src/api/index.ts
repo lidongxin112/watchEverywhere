@@ -11,6 +11,8 @@ export interface ResourceItem {
   description?: string;
   contentType?: number;
   tags?: string[];
+  /** 收藏夹分组 id 列表 */
+  groups?: string[];
   createTime?: number;
   updateTime?: number;
 }
@@ -305,3 +307,35 @@ export const getBiliSubtitles = (data: { cid?: string; bvid?: string; epId?: str
   request<{ code: number; subtitles: SubtitleMeta[]; msg?: string }>('subtitle/bili-list', data, false);
 
 export const fetchBiliSubtitle = (url: string) => request<SubtitleCue[]>('subtitle/bili-fetch', { url }, false);
+
+// ======================= 规则市场 =======================
+
+export interface MarketItem {
+  id: string;
+  name: string;
+  host: string;
+  contentType: number;
+  description?: string;
+  tags?: string[];
+  installed: boolean;
+}
+
+export const getMarket = () => request<MarketItem[]>('market/list', {}, false);
+export const installMarketRule = (id: string) => request('market/install', { id }, false);
+
+// ======================= 收藏分组 =======================
+
+export interface FavoriteGroup {
+  id: string;
+  name: string;
+  createTime: number;
+}
+
+export const getFavoriteGroups = () => request<FavoriteGroup[]>('resource-favorites/groups', {}, false);
+export const saveFavoriteGroup = (data: { id?: string; name: string }) =>
+  request<FavoriteGroup[]>('resource-favorites/group-save', data, false);
+export const removeFavoriteGroup = (id: string) => request<FavoriteGroup[]>('resource-favorites/group-remove', { id }, false);
+export const assignFavoriteGroups = (data: { items: { ruleId: string; url: string }[]; groups: string[]; mode?: 'add' | 'set' }) =>
+  request<number>('resource-favorites/assign-groups', data, false);
+export const bulkUnstar = (items: { ruleId: string; url: string }[]) =>
+  request<number>('resource-favorites/bulk-unstar', { items }, false);

@@ -10,6 +10,7 @@
             <a-menu-divider />
             <a-menu-item @click="cmsOpen = true">从资源站添加（苹果CMS）</a-menu-item>
             <a-menu-item @click="openSubscriptions">管理规则订阅</a-menu-item>
+            <a-menu-item @click="openMarket">规则市场</a-menu-item>
             <a-menu-item @click="openBackups">备份与恢复</a-menu-item>
             <a-menu-divider />
             <a-menu-item @click="editRule('')">新建规则</a-menu-item>
@@ -117,6 +118,31 @@
       </a-form>
     </a-modal>
 
+    <!-- 规则市场 -->
+    <a-drawer v-model:open="marketOpen" title="规则市场" placement="right" :width="560">
+      <p class="we-muted" style="font-size: 12px">内置索引随程序发布，点「添加」即导入；已安装的会标出来。</p>
+      <a-space style="margin-bottom: 10px" wrap>
+        <a-checkbox-group v-model:value="marketTypes" :options="CONTENT_TYPES" />
+        <a-input v-model:value="marketFilter" placeholder="搜索名称 / 描述" allow-clear style="width: 180px" />
+      </a-space>
+      <a-empty v-if="!marketList.length" description="暂无规则" />
+      <div v-for="m in marketFiltered" :key="m.id" class="market-item">
+        <div class="market-item__main">
+          <div class="market-item__name">
+            {{ m.name }}
+            <a-tag v-if="m.installed" color="green" style="margin-left: 6px">已安装</a-tag>
+          </div>
+          <div class="market-item__desc we-muted">{{ m.description || m.host }}</div>
+          <div class="market-item__tags">
+            <a-tag v-for="t in m.tags || []" :key="t">{{ t }}</a-tag>
+          </div>
+        </div>
+        <a-button size="small" :type="m.installed ? 'default' : 'primary'" :loading="installing === m.id" @click="installMarket(m)">
+          {{ m.installed ? '更新' : '添加' }}
+        </a-button>
+      </div>
+    </a-drawer>
+
     <!-- 规则订阅 -->
     <a-drawer v-model:open="subOpen" title="规则订阅" placement="right" :width="520">
       <a-form layout="vertical">
@@ -188,13 +214,16 @@ import {
   checkSubscription as apiCheckSubscription,
   delRules,
   deleteSubscription,
+  getMarket,
   getRuleBackups,
+  installMarketRule,
   getSubscriptions,
   importCMS,
   importRules,
   pingRule,
   restoreRuleBackup,
   saveSubscription as apiSaveSubscription,
+  type MarketItem,
   type RuleSubscription
 } from '@/api';
 import { useRulesStore } from '@/stores/rules';
@@ -219,6 +248,39 @@ const subChecking = ref(false);
 const subCheckingId = ref('');
 const subscriptions = ref<RuleSubscription[]>([]);
 const subForm = ref({ url: '', name: '', autoUpdate: true });
+
+// ---------------- 规则市场 ----------------
+const marketOpen = ref(false);
+const marketList = ref<MarketItem[]>([]);
+const marketTypes = ref<number[]>([]);
+const marketFilter = ref('');
+const installing = ref('');
+
+const marketFiltered = computed(() =>
+  marketList.value.filter(
+    (m) =>
+      (!marketTypes.value.length || marketTypes.value.includes(m.contentType)) &&
+      (!marketFilter.value ||
+        m.name.includes(marketFilter.value) ||
+        String(m.description || '').includes(marketFilter.value))
+  )
+);
+
+async function openMarket() {
+  marketOpen.value = true;
+  const res = await getMarket();
+  if (res.code === 0) marketList.value = res.data || [];
+}
+
+async function installMarket(m: MarketItem) {
+  installing.value = m.id;
+  const res = await installMarketRule(m.id);
+  installing.value = '';
+  if (res.code !== 0) return message.error(res.msg || '添加失败');
+  message.success(`${m.name} 已${m.installed ? '更新' : '添加'}`);
+  await openMarket();
+  await refresh();
+}
 
 // ---------------- 备份 ----------------
 const backupOpen = ref(false);
@@ -491,6 +553,32 @@ onMounted(refresh);
   color: #ff4d4f;
 }
 
+.market-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.25));
+}
+.market-item__main {
+  flex: 1;
+  min-width: 0;
+}
+.market-item__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.market-item__desc {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.market-item__tags {
+  margin-top: 4px;
+}
+.market-item__tags .ant-tag {
+  font-size: 11px;
+  margin: 0 4px 0 0;
+}
 .sub-item {
   display: flex;
   align-items: center;

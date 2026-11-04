@@ -11,8 +11,16 @@ export interface ResourceItem {
   chapter?: string;
   description?: string;
   contentType?: number;
+  /** 收藏夹分组 id */
+  groups?: string[];
   createTime: number;
   updateTime: number;
+}
+
+export interface FavoriteGroup {
+  id: string;
+  name: string;
+  createTime: number;
 }
 
 export interface ChapterHistoryItem {

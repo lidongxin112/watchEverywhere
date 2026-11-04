@@ -1,6 +1,17 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { getFavorites, star as apiStar, unstar as apiUnstar, type ResourceItem } from '@/api';
+import {
+  assignFavoriteGroups,
+  bulkUnstar,
+  getFavoriteGroups,
+  getFavorites,
+  removeFavoriteGroup,
+  saveFavoriteGroup,
+  star as apiStar,
+  unstar as apiUnstar,
+  type FavoriteGroup,
+  type ResourceItem
+} from '@/api';
 
 export const useFavoritesStore = defineStore('favorites', () => {
   const list = ref<ResourceItem[]>([]);
@@ -36,5 +47,37 @@ export const useFavoritesStore = defineStore('favorites', () => {
     await sync();
   }
 
-  return { list, sync, starred, toggle, unstar };
+  const groups = ref<FavoriteGroup[]>([]);
+
+  async function syncGroups() {
+    const res = await getFavoriteGroups();
+    groups.value = res.code === 0 ? res.data || [] : [];
+  }
+
+  async function saveGroup(name: string, id?: string) {
+    const res = await saveFavoriteGroup({ id, name });
+    if (res.code === 0 && res.data) groups.value = res.data;
+    return res;
+  }
+
+  async function removeGroup(id: string) {
+    const res = await removeFavoriteGroup(id);
+    if (res.code === 0 && res.data) groups.value = res.data;
+    await sync();
+    return res;
+  }
+
+  async function assignGroups(items: { ruleId: string; url: string }[], groupIds: string[], mode: 'add' | 'set' = 'add') {
+    const res = await assignFavoriteGroups({ items, groups: groupIds, mode });
+    await sync();
+    return res;
+  }
+
+  async function bulkRemove(items: { ruleId: string; url: string }[]) {
+    const res = await bulkUnstar(items);
+    await sync();
+    return res;
+  }
+
+  return { list, groups, sync, syncGroups, starred, toggle, unstar, saveGroup, removeGroup, assignGroups, bulkRemove };
 });

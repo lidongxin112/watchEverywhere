@@ -9,20 +9,49 @@
 
     <section class="we-page home__main">
       <template v-if="active === 0">
+        <div class="we-page-header" style="margin-bottom: 8px">
+          <a-space wrap>
+            <a-tag :color="favGroup === '' ? 'blue' : ''" style="cursor: pointer" @click="favGroup = ''">
+              全部 {{ favorites.list.length }}
+            </a-tag>
+            <a-tag
+              v-for="g in favorites.groups"
+              :key="g.id"
+              :color="favGroup === g.id ? 'blue' : ''"
+              style="cursor: pointer"
+              closable
+              @close="onRemoveGroup(g.id, g.name)"
+              @click="favGroup = g.id"
+            >
+              {{ g.name }} {{ countInGroup(g.id) }}
+            </a-tag>
+            <a-tag style="cursor: pointer" @click="newGroupOpen = true">+ 分组</a-tag>
+          </a-space>
+          <div style="flex: 1"></div>
+          <a-space>
+            <a-button size="small" @click="selectMode = !selectMode">{{ selectMode ? '退出多选' : '多选' }}</a-button>
+          </a-space>
+        </div>
+
         <div v-if="!favorites.list.length" class="we-center">
           <a-empty description="还没有收藏，去搜索或发现页看看吧">
             <a-button type="primary" @click="router.push('/search')">去搜索</a-button>
           </a-empty>
         </div>
-        <div v-else class="we-card-grid">
-          <MediaCard
-            v-for="item in favorites.list"
-            :key="item.ruleId + item.url"
-            :item="item"
-            show-rule
-            @open="open"
-          />
-        </div>
+        <template v-else>
+          <div v-if="!favVisible.length" class="we-center"><a-empty description="这个分组还没有内容" /></div>
+          <div v-else class="we-card-grid">
+            <div v-for="item in favVisible" :key="item.ruleId + item.url" class="fav-cell">
+              <MediaCard :item="item" show-rule @open="onCardOpen(item)" />
+              <a-checkbox
+                v-if="selectMode"
+                class="fav-cell__check"
+                :checked="isSelected(item)"
+                @change="(e: any) => toggleSelect(item, e)"
+              />
+            </div>
+          </div>
+        </template>
       </template>
 
       <template v-else>
@@ -47,27 +76,117 @@
         </div>
       </template>
     </section>
+
+    <!-- 批量操作条 -->
+    <div v-if="active === 0 && selectMode && selected.length" class="fav-bar">
+      <span>已选 {{ selected.length }} 项</span>
+      <a-select
+        v-model:value="targetGroups"
+        mode="multiple"
+        size="small"
+        placeholder="选择分组"
+        style="min-width: 200px"
+        :options="favorites.groups.map((g) => ({ value: g.id, label: g.name }))"
+      />
+      <a-button size="small" type="primary" @click="assignSelected">加入分组</a-button>
+      <a-button size="small" @click="assignSelected('set')">仅保留所选分组</a-button>
+      <a-popconfirm title="批量取消收藏？" ok-text="取消收藏" @confirm="removeSelected">
+        <a-button size="small" danger>取消收藏</a-button>
+      </a-popconfirm>
+      <a-button size="small" type="text" @click="selected = []">清空选择</a-button>
+    </div>
+
+    <a-modal v-model:open="newGroupOpen" title="新建收藏分组" ok-text="创建" @ok="createGroup">
+      <a-input v-model:value="newGroupName" placeholder="例如：在看 / 想补 / 神作" @press-enter="createGroup" />
+    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onActivated, ref } from 'vue';
+import { computed, onActivated, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import MediaCard from '@/components/MediaCard.vue';
 import { useFavoritesStore } from '@/stores/favorites';
 import { useHistoryStore } from '@/stores/history';
 import { useOpenResource } from '@/utils/navigate';
+import { message } from 'ant-design-vue';
 
 const router = useRouter();
 const favorites = useFavoritesStore();
 const history = useHistoryStore();
 const open = useOpenResource();
 
+// ---------------- 收藏分组 / 多选 ----------------
+const favGroup = ref('');
+const selectMode = ref(false);
+const selected = ref<{ ruleId: string; url: string }[]>([]);
+const targetGroups = ref<string[]>([]);
+const newGroupOpen = ref(false);
+const newGroupName = ref('');
+
+const favVisible = computed(() =>
+  favGroup.value ? favorites.list.filter((i) => (i.groups || []).includes(favGroup.value)) : favorites.list
+);
+
+function countInGroup(id: string) {
+  return favorites.list.filter((i) => (i.groups || []).includes(id)).length;
+}
+
+function isSelected(item: { ruleId: string; url: string }) {
+  return selected.value.some((s) => s.ruleId === item.ruleId && s.url === item.url);
+}
+
+function toggleSelect(item: { ruleId: string; url: string }, e: any) {
+  const checked = e?.target?.checked ?? !isSelected(item);
+  if (checked) selected.value.push({ ruleId: item.ruleId, url: item.url });
+  else selected.value = selected.value.filter((s) => !(s.ruleId === item.ruleId && s.url === item.url));
+}
+
+function onCardOpen(item: any) {
+  if (selectMode.value) {
+    toggleSelect(item, { target: { checked: !isSelected(item) } });
+    return;
+  }
+  open(item);
+}
+
+async function createGroup() {
+  const name = newGroupName.value.trim();
+  if (!name) return;
+  const res = await favorites.saveGroup(name);
+  if (res.code !== 0) return message.error(res.msg || '创建失败');
+  newGroupOpen.value = false;
+  newGroupName.value = '';
+  message.success('已创建');
+}
+
+async function onRemoveGroup(id: string, name: string) {
+  const res = await favorites.removeGroup(id);
+  if (res.code !== 0) return message.error(res.msg || '删除失败');
+  if (favGroup.value === id) favGroup.value = '';
+  message.success(`已删除分组「${name}」`);
+}
+
+async function assignSelected(mode: 'add' | 'set' = 'add') {
+  if (!targetGroups.value.length) return message.warning('先选择分组');
+  const res = await favorites.assignGroups(selected.value, targetGroups.value, mode);
+  if (res.code !== 0) return message.error(res.msg || '操作失败');
+  message.success(`已更新 ${res.data} 项`);
+}
+
+async function removeSelected() {
+  const res = await favorites.bulkRemove(selected.value);
+  if (res.code !== 0) return message.error(res.msg || '操作失败');
+  message.success(`已取消收藏 ${res.data} 项`);
+  selected.value = [];
+}
+
 const navs = ['收藏', '历史'];
 const active = ref(0);
 
 onActivated(() => {
   favorites.sync();
+  favorites.syncGroups();
   history.sync();
 });
 </script>
@@ -76,6 +195,42 @@ onActivated(() => {
 .home {
   height: 100%;
   display: flex;
+}
+.fav-cell {
+  position: relative;
+}
+.fav-cell__check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.fav-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--we-top-bar-bg, #222);
+  border: 1px solid var(--we-top-bar-border, rgba(128, 128, 128, 0.3));
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .fav-bar {
+    left: 8px;
+    right: 8px;
+    transform: none;
+    flex-wrap: wrap;
+  }
 }
 .home__nav {
   width: 120px;
@@ -113,7 +268,43 @@ onActivated(() => {
   .home {
     flex-direction: column;
   }
-  .home__nav {
+  .fav-cell {
+  position: relative;
+}
+.fav-cell__check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.fav-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--we-top-bar-bg, #222);
+  border: 1px solid var(--we-top-bar-border, rgba(128, 128, 128, 0.3));
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  z-index: 20;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .fav-bar {
+    left: 8px;
+    right: 8px;
+    transform: none;
+    flex-wrap: wrap;
+  }
+}
+.home__nav {
     width: 100%;
     display: flex;
     gap: 6px;

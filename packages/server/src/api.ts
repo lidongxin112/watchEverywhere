@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
@@ -21,6 +21,7 @@ import { fetchDanmaku } from './danmaku';
 import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
+import { installFromMarket, listMarket } from './market';
 import { fetchBiliSubtitle, listBiliSubtitles } from './subtitle';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
@@ -609,6 +610,62 @@ export const routes: Record<string, Handler> = {
   // ======================= 收藏 =======================
   'resource-favorites/list': () => favoritesStore.value,
   'resource-favorites/star': (data) => upsertResource(favoritesStore, data),
+  /** 收藏夹分组 */
+  'resource-favorites/groups': () => (configStore.value.favoriteGroups || []) as any,
+
+  'resource-favorites/group-save': ({ id, name }) => {
+    const list: any[] = [...(configStore.value.favoriteGroups || [])];
+    const clean = String(name || '').trim();
+    if (!clean) throw new Error('分组名不能为空');
+    if (id) {
+      const idx = list.findIndex((g) => g.id === id);
+      if (idx > -1) list[idx] = { ...list[idx], name: clean };
+    } else {
+      if (list.some((g) => g.name === clean)) throw new Error('同名分组已存在');
+      list.push({ id: randomUUID(), name: clean, createTime: Date.now() });
+    }
+    configStore.value.favoriteGroups = list;
+    configStore.save();
+    return list;
+  },
+
+  'resource-favorites/group-remove': ({ id }) => {
+    const list: any[] = (configStore.value.favoriteGroups || []).filter((g: any) => g.id !== id);
+    configStore.value.favoriteGroups = list;
+    configStore.save();
+    // 从收藏项里摘掉这个分组
+    favoritesStore.set(
+      favoritesStore.value.map((item) =>
+        item.groups?.includes(id) ? { ...item, groups: item.groups.filter((g: string) => g !== id) } : item
+      )
+    );
+    return list;
+  },
+
+  /** 批量设置分组：mode=add 追加 / set 覆盖 */
+  'resource-favorites/assign-groups': ({ items, groups, mode = 'add' }) => {
+    const keys = new Set((items || []).map((i: any) => `${i.ruleId}@${i.url}`));
+    let changed = 0;
+    favoritesStore.set(
+      favoritesStore.value.map((item) => {
+        if (!keys.has(`${item.ruleId}@${item.url}`)) return item;
+        changed++;
+        const current = item.groups || [];
+        const next = mode === 'set' ? [...groups] : Array.from(new Set([...current, ...groups]));
+        return { ...item, groups: next };
+      })
+    );
+    return changed;
+  },
+
+  /** 批量取消收藏 */
+  'resource-favorites/bulk-unstar': ({ items }) => {
+    const keys = new Set((items || []).map((i: any) => `${i.ruleId}@${i.url}`));
+    const before = favoritesStore.value.length;
+    favoritesStore.set(favoritesStore.value.filter((item) => !keys.has(`${item.ruleId}@${item.url}`)));
+    return before - favoritesStore.value.length;
+  },
+
   'resource-favorites/unstar': (data) => {
     favoritesStore.set(favoritesStore.value.filter((e) => !sameResource(e, data)));
     return true;
@@ -654,6 +711,10 @@ export const routes: Record<string, Handler> = {
   ...liveRoutes,
 
   // ======================= 缓存 =======================
+  /** 规则市场：内置索引 + 可选远程索引 */
+  'market/list': () => listMarket(),
+  'market/install': ({ id }) => installFromMarket(String(id || '')),
+
   /** 修复收藏/历史指向已失效规则的问题（按域名重新绑定） */
   'app/repair-resources': () => repairResources(),
 
