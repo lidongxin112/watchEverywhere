@@ -19,6 +19,7 @@ import { extractImages, needsBrowser } from './extract-images';
 import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
 import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
+import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
@@ -384,12 +385,24 @@ export const routes: Record<string, Handler> = {
         const only = content.length === 1 ? content[0] : '';
         const looksLikePage = only && /^https?:\/\//.test(only) && !/\.(jpe?g|png|webp|gif|avif)/i.test(only);
         if (looksLikePage && needsBrowser(only)) {
-          try {
-            const page = await browserFetch(only, { waitMs: 2500, waitFor: 'amp-img' });
-            const images = extractImages(page.html, page.url);
-            if (images.length) content = images;
-          } catch (e: any) {
-            console.warn('[browser] 抓取失败', only, e?.message || e);
+          // 先看磁盘缓存：同一章第二次打开不用再起 Chrome
+          const hit = readPageCache(only);
+          if (hit) {
+            content = hit;
+          } else {
+            try {
+              const started = Date.now();
+              const page = await browserFetch(only, { waitMs: 2500, waitFor: 'amp-img' });
+              const images = extractImages(page.html, page.url);
+              if (images.length) {
+                content = images;
+                writePageCache(only, images);
+                console.log(`[browser] ${only.slice(-40)} 抓到 ${images.length} 张，${Date.now() - started}ms（已缓存）`);
+              }
+            } catch (e: any) {
+              pushLog('warn', 'content/browser', `Chrome 抓取失败：${e?.message || e}`, { url: only });
+              console.warn('[browser] 抓取失败', only, e?.message || e);
+            }
           }
         }
         if (!content.length) throw new Error('获取内容失败');
@@ -634,6 +647,8 @@ export const routes: Record<string, Handler> = {
 
   // ======================= 缓存 =======================
   'cache/clear': () => {
+    const pages = clearPageCache();
+    if (pages) pushLog('info', 'cache', `清理页面缓存 ${pages} 个`);
     cache.clear();
     return true;
   }

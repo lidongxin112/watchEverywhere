@@ -119,7 +119,7 @@ async function changeRule(id: string, refresh = false) {
   const res = await discoverMap(id);
   if (my !== reqId) return;
   loading.value = false;
-  categoryList.value = res.data || [];
+  categoryList.value = sortByRecent(id, res.data || []);
   if (res.code !== 0) errMsg.value = res.msg;
 
   // 恢复上次看的分组：能按名字找到就用它，否则用第一个
@@ -159,9 +159,38 @@ async function load() {
   noMore.value = !fresh.length;
 }
 
+/** 最近看过的分组排前面（每个规则最多记 3 个） */
+const RECENT_KEY = (id: string) => `we-discover-recent:${id}`;
+
+function sortByRecent(id: string, groups: { name: string; pairs: any[] }[]) {
+  let recent: string[] = [];
+  try {
+    recent = JSON.parse(localStorage.getItem(RECENT_KEY(id)) || '[]');
+  } catch {
+    recent = [];
+  }
+  if (!recent.length) return groups;
+  const rank = (name: string) => {
+    const i = recent.indexOf(name);
+    return i === -1 ? 999 : i;
+  };
+  return [...groups].sort((a, b) => rank(a.name) - rank(b.name));
+}
+
+function rememberGroup(id: string, name: string) {
+  try {
+    const list: string[] = JSON.parse(localStorage.getItem(RECENT_KEY(id)) || '[]');
+    const next = [name, ...list.filter((n) => n !== name)].slice(0, 3);
+    localStorage.setItem(RECENT_KEY(id), JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
 function changeCategory(row: { name: string; value?: string }) {
   if (!row.value) return;
   current.value = { name: row.name, value: row.value };
+  rememberGroup(ruleId.value, row.name);
   try {
     localStorage.setItem(`we-discover-tab:${ruleId.value}`, JSON.stringify({ name: row.name, value: row.value }));
   } catch {
