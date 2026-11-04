@@ -16,7 +16,13 @@
       <template v-if="loading"><a-spin size="small" /> <span>正在搜索…</span></template>
       <template v-else-if="searched">
         共 {{ list.length }} 条
-        <span v-if="!list.length">（没搜到，换个关键词，或者这些站点当前网络不可达）</span>
+        <span v-for="s0 in sourceStatus" :key="s0.name" class="magnet__src" :class="{ bad: !s0.ok }">
+          {{ s0.name }}: {{ s0.ok ? s0.count + ' 条 / ' + s0.ms + 'ms' : '无结果或不可达' }}
+        </span>
+        <div v-if="pending && !list.length" style="margin-top: 4px">
+          主站还在后台搜索（这类关键词它要十几秒），稍等一下会自动出结果…
+        </div>
+        <div v-else-if="!list.length" style="margin-top: 4px">{{ emptyHint }}</div>
       </template>
       <template v-else>只做搜索与磁力生成，不包含离线下载 / 网盘转存</template>
     </div>
@@ -56,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
 import { resolveMagnet, searchMagnet, type MagnetItem } from '@/api';
@@ -68,6 +74,9 @@ const keyword = ref('');
 const loading = ref(false);
 const searched = ref(false);
 const list = ref<MagnetItem[]>([]);
+const sourceStatus = ref<{ name: string; count: number; ok: boolean; ms: number; error?: string }[]>([]);
+const pending = ref(false);
+let retryTimer: number | null = null;
 const resolving = ref('');
 const sources = ref<string[]>(['mikan', 'nyaa', 'acgrip']);
 
@@ -83,11 +92,17 @@ const columns = [
   { title: '操作', key: 'action', width: 260 }
 ];
 
-async function search(reset = true) {
+const emptyHint = computed(() => {
+  if (list.value.length) return '';
+  const tried = sourceStatus.value.map((s0) => s0.name).join('、') || '所选站点';
+  return `没搜到。已尝试：${tried}。可以换个关键词（日文原名命中率更高，例如「鬼滅の刃」），或在设置里错开时间再试。`;
+});
+
+async function search(reset = true, silent = false) {
   const kw = keyword.value.trim();
   if (!kw) return;
   if (reset) router.replace({ query: { keyword: kw } });
-  loading.value = true;
+  if (!silent) loading.value = true;
   searched.value = true;
   const res = await searchMagnet({ keyword: kw, sources: sources.value });
   loading.value = false;
@@ -96,7 +111,16 @@ async function search(reset = true) {
     list.value = [];
     return;
   }
-  list.value = res.data || [];
+  list.value = res.data?.items || [];
+  sourceStatus.value = res.data?.sources || [];
+  pending.value = !!res.data?.pending;
+  if (retryTimer) clearTimeout(retryTimer);
+  if (pending.value) {
+    // 后台补搜完成后自动再拉一次（最多两次）
+    retryTimer = window.setTimeout(() => {
+      if (pending.value) void search(false, true);
+    }, 9000);
+  }
 }
 
 async function makeMagnet(row: MagnetItem) {
@@ -137,6 +161,16 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 10px;
+}
+.magnet__src {
+  margin-left: 10px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(64, 184, 131, 0.15);
+}
+.magnet__src.bad {
+  background: rgba(255, 77, 79, 0.15);
+  color: #ff7875;
 }
 .magnet__status {
   font-size: 12px;

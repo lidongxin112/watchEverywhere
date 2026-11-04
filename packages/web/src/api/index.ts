@@ -512,8 +512,23 @@ export interface MagnetItem {
   torrentUrl?: string;
 }
 
+export interface MagnetSourceStatus {
+  name: string;
+  count: number;
+  ok: boolean;
+  ms: number;
+  error?: string;
+}
+
+export interface MagnetSearchResult {
+  items: MagnetItem[];
+  sources: MagnetSourceStatus[];
+  primaryOk: boolean;
+  pending?: boolean;
+}
+
 export const searchMagnet = (data: { keyword: string; sources?: string[] }) =>
-  request<MagnetItem[]>('magnet/search', data, false);
+  request<MagnetSearchResult>('magnet/search', data, false);
 
 export const resolveMagnet = (data: { torrentUrl: string; title: string }) =>
   request<{ infohash: string; magnet: string }>('magnet/resolve', data, false);

@@ -306,11 +306,28 @@ export async function resolveTorrent(torrentUrl: string, title: string): Promise
   return { infohash, magnet: magnetOf(infohash, title) };
 }
 
-export async function searchMagnet(keyword: string, sources?: string[]): Promise<MagnetItem[]> {
+export interface SourceStatus {
+  name: string;
+  count: number;
+  ok: boolean;
+  ms: number;
+  error?: string;
+}
+
+export interface MagnetSearchResult {
+  items: MagnetItem[];
+  sources: SourceStatus[];
+  /** 主源（Mikan）是否拿到数据 */
+  primaryOk: boolean;
+  /** 主源超时、后台还在补搜，客户端可以过几秒再查一次 */
+  pending?: boolean;
+}
+
+export async function searchMagnet(keyword: string, sources?: string[]): Promise<MagnetSearchResult> {
   const kw = String(keyword || '').trim();
-  if (!kw) return [];
+  if (!kw) return { items: [], sources: [], primaryOk: false };
   const key = `magnet@${kw}@${(sources || []).join(',')}`;
-  const hit = cache.get<MagnetItem[]>(key);
+  const hit = cache.get<MagnetSearchResult>(key);
   if (hit) return hit;
 
   const want = (name: string) => !sources?.length || sources.includes(name);
@@ -320,7 +337,7 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
       new Promise<MagnetItem[]>((resolve) => setTimeout(() => resolve([]), ms))
     ]);
 
-  const dedupe = (all: MagnetItem[]) => {
+  const dedupe = (all: MagnetItem[]): MagnetItem[] => {
     const seen = new Set<string>();
     return all
       .filter((x) => {
@@ -333,24 +350,53 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
   };
 
   // 主源同步返回（Mikan 一般 1~2 秒），其他源后台补齐，避免被墙的站点拖住整个搜索
-  const primary = want('mikan') ? dedupe(await withTimeout(searchMikan(kw), 12000)) : [];
+  const status: SourceStatus[] = [];
+  const timed = async (name: string, fn: () => Promise<MagnetItem[]>, ms: number): Promise<MagnetItem[]> => {
+    const t0 = Date.now();
+    let done = false;
+    const rows = await withTimeout(fn(), ms);
+    done = rows.length > 0;
+    status.push({ name, count: rows.length, ok: done, ms: Date.now() - t0, error: done ? undefined : '无结果或超时' });
+    return dedupe(rows);
+  };
+
+  // 主源：Mikan 对部分关键词很慢（实测「鬼灭之刃」要 19 秒），先给 10 秒，
+  // 超时就把请求丢到后台继续跑，客户端几秒后再来取（结果会进缓存）
+  let primary: MagnetItem[] = [];
+  let pending = false;
+  if (want('mikan')) {
+    const primaryMs = Number(process.env.WE_MAGNET_TIMEOUT) || 10000;
+    primary = await timed('Mikan', () => searchMikan(kw), primaryMs);
+    if (!primary.length) {
+      pending = true;
+      void searchMikan(kw)
+        .then((rows) => {
+          if (!rows.length) return;
+          const merged = dedupe([...primary, ...rows]);
+          cache.set(key, { items: merged, sources: status, primaryOk: true, pending: false }, TTL);
+          pushLog('info', 'magnet', `后台补搜完成：${kw} → ${rows.length} 条`);
+        })
+        .catch(() => {});
+    }
+  }
 
   const rest: Promise<MagnetItem[]>[] = [];
-  if (want('nyaa')) rest.push(withTimeout(searchNyaa(kw), 8000));
-  if (want('acgrip')) rest.push(withTimeout(searchAcgRip(kw), 8000));
+  if (want('nyaa')) rest.push(timed('Nyaa', () => searchNyaa(kw), 8000));
+  if (want('acgrip')) rest.push(timed('ACG.RIP', () => searchAcgRip(kw), 8000));
   if (rest.length) {
     void Promise.all(rest)
       .then(async (lists) => {
         const extra = lists.flat();
         if (!extra.length) return;
         const merged = dedupe([...primary, ...extra]);
-        if (merged.length) cache.set(key, merged, TTL);
+        if (merged.length) cache.set(key, { items: merged, sources: status, primaryOk: primary.length > 0 }, TTL);
       })
       .catch(() => {});
   }
 
   const out = dedupe(primary);
+  const result: MagnetSearchResult = { items: out, sources: status, primaryOk: out.length > 0, pending };
   // 空结果不缓存：站点偶尔超时/限流，别让一次失败把 15 分钟都锁死
-  if (out.length) cache.set(key, out, TTL);
-  return out;
+  if (out.length) cache.set(key, result, TTL);
+  return result;
 }
