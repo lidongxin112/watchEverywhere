@@ -67,7 +67,16 @@
         <span>记住播放进度</span>
         <a-switch v-model:checked="setting.data.player.resume" />
       </div>
+      <div class="setting__row">
+        <span>跳过片头</span>
+        <a-input-number v-model:value="setting.data.player.skipIntro" :min="0" :max="600" size="small" style="width: 96px" addon-after="秒" />
+      </div>
+      <div class="setting__row">
+        <span>跳过片尾</span>
+        <a-input-number v-model:value="setting.data.player.skipOutro" :min="0" :max="600" size="small" style="width: 96px" addon-after="秒" />
+      </div>
     </div>
+
 
     <div class="setting__group">
       <div class="setting__label">

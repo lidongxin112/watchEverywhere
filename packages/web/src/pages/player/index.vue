@@ -96,7 +96,11 @@
         <span class="we-muted">{{ roadChapters.length }} 集</span>
       </div>
       <div v-if="chapters.roads.length > 1" class="player__roads">
-        <div v-for="r in chapters.roads" :key="r" :class="['we-chip', { active: road === r }]" @click="road = r">{{ r || '默认' }}</div>
+        <a-tooltip v-for="r in sortedRoads" :key="r" :title="roadHint(r)">
+          <div :class="['we-chip', { active: road === r, 'is-bad': isBadRoad(r) }]" @click="road = r">
+            {{ r || '默认' }}<span v-if="isBadRoad(r)" class="player__road-bad">!</span>
+          </div>
+        </a-tooltip>
       </div>
       <div ref="episodesRef" class="player__episodes">
         <div
@@ -139,6 +143,55 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 线路可用性记忆 ----------------
+const roadStat = ref<Record<string, { ok: number; fail: number; lastFail: number }>>({});
+const roadKey = (id: string) => `we-roadstat:${id}`;
+
+function loadRoadStat(id: string) {
+  try {
+    roadStat.value = JSON.parse(localStorage.getItem(roadKey(id)) || '{}');
+  } catch {
+    roadStat.value = {};
+  }
+}
+
+function saveRoadStat() {
+  try {
+    localStorage.setItem(roadKey(ruleId), JSON.stringify(roadStat.value));
+  } catch {
+    /* ignore */
+  }
+}
+
+function markRoad(ok: boolean) {
+  const r = road.value || '默认';
+  const cur = roadStat.value[r] || { ok: 0, fail: 0, lastFail: 0 };
+  if (ok) cur.ok += 1;
+  else {
+    cur.fail += 1;
+    cur.lastFail = Date.now();
+  }
+  roadStat.value = { ...roadStat.value, [r]: cur };
+  saveRoadStat();
+}
+
+/** 最近 30 分钟失败过、且没成功过的线路判为“可疑” */
+function isBadRoad(name: string) {
+  const s = roadStat.value[name || '默认'];
+  if (!s) return false;
+  return s.fail > s.ok * 2 && Date.now() - s.lastFail < 30 * 60_000;
+}
+
+function roadHint(name: string) {
+  const s = roadStat.value[name || '默认'];
+  if (!s) return '还没有播放记录';
+  return `成功 ${s.ok} 次 / 失败 ${s.fail} 次`;
+}
+
+const sortedRoads = computed(() =>
+  [...chapters.roads].sort((a, b) => Number(isBadRoad(a)) - Number(isBadRoad(b)))
+);
+
 const needTap = ref(false);
 const buffering = ref(false);
 const stalled = ref(false);
@@ -219,7 +272,6 @@ async function togglePip() {
 }
 const rateOptions = [0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((v) => ({ value: v, label: `${v}x` }));
 let hls: Hls | null = null;
-let resumed = false;
 
 const current = computed(() => chapters.chapters.find((c) => c.chapterPath === chapterPath));
 const roadChapters = computed(() => chapters.chapters.filter((c) => (c.road || '') === road.value));
@@ -294,7 +346,6 @@ async function init(noCache = false) {
   loading.value = true;
   errMsg.value = '';
   iframeMode.value = false;
-  resumed = false;
   chapters.currentPath = chapterPath;
 
   const list = await chapters.load(ruleId, filePath);
@@ -330,6 +381,7 @@ function watchStall() {
     if (!v || errMsg.value) return;
     if (v.readyState >= 2 && v.currentTime > 0.3) return;
     stalled.value = true;
+    markRoad(false);
     void postClientLog({
       level: 'error',
       scope: 'stalled',
@@ -376,24 +428,44 @@ function onLoaded() {
   video.playbackRate = rate.value;
   video.volume = volume.value;
   const t = Number(q.currentTime || 0);
-  if (!resumed && setting.data.player.resume && t > 5 && (!video.duration || t < video.duration - 10)) {
-    video.currentTime = t;
-    message.info(`已从上次的位置 ${formatTime(t)} 继续播放`);
+  const resumeFrom = setting.data.player.resume && t > 5 && (!video.duration || t < video.duration - 10) ? t : 0;
+  const intro = Number(setting.data.player.skipIntro || 0);
+  if (resumeFrom) {
+    video.currentTime = resumeFrom;
+    message.info(`已从上次的位置 ${formatTime(resumeFrom)} 继续播放`);
+  } else if (intro > 0 && intro < (video.duration || 0)) {
+    video.currentTime = intro;
   }
-  resumed = true;
+  outroSkipped = false;
   void startPlayback();
   watchStall();
 }
 
 let lastSave = 0;
+let markedOk = false;
 function updateBuffering() {
   const v = videoRef.value;
   buffering.value = !!v && !v.paused && v.readyState < 3;
   if (v && v.currentTime > 0.5) stalled.value = false;
+  if (v && v.currentTime > 3 && !markedOk) {
+    markedOk = true;
+    markRoad(true);
+  }
 }
 
+let outroSkipped = false;
 function onTimeUpdate() {
   updateBuffering();
+  // 跳过片尾
+  const v = videoRef.value;
+  const outro = Number(setting.data.player.skipOutro || 0);
+  if (v && outro > 0 && !outroSkipped && v.duration && v.duration - v.currentTime <= outro) {
+    outroSkipped = true;
+    if (next.value) {
+      message.info('已跳过片尾，播放下一集');
+      go(next.value);
+    }
+  }
   const now = Date.now();
   if (now - lastSave < 5000) return;
   lastSave = now;
@@ -420,8 +492,25 @@ function onEnded() {
 
 /** 资源站 m3u8 的 sign 会过期 → 第一次失败自动重新解析一次（带 noCache） */
 let autoRetried = false;
+/** 选一条没被判坏的备用线路 */
+function betterRoad(): string | null {
+  const candidates = chapters.roads.filter((r) => r !== road.value && !isBadRoad(r));
+  return candidates[0] ?? null;
+}
+
 async function retryOnce(reason: string) {
   if (autoRetried) {
+    markRoad(false);
+    const alt = betterRoad();
+    if (alt) {
+      message.warning(`这条线路播不出来，已切到「${alt}」`);
+      road.value = alt;
+      autoRetried = false;
+      errMsg.value = '';
+      const target = chapters.chapters.find((c) => (c.road || '') === alt && c.name === current.value?.name);
+      if (target) go(target);
+      return;
+    }
     errMsg.value = reason;
     return;
   }
@@ -495,6 +584,8 @@ function onKey(e: KeyboardEvent) {
 useBus(EVENT_CHAPTERS_BOX).on(() => episodesRef.value?.querySelector('.active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
 
 onMounted(() => {
+  loadRoadStat(ruleId);
+  markedOk = false;
   pumpDanmaku();
   init();
   window.addEventListener('keydown', onKey);
@@ -653,6 +744,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
   display: flex;
   justify-content: space-between;
+}
+.player__road-bad {
+  margin-left: 4px;
+  color: #fa8c16;
+  font-weight: 700;
+}
+.player__roads .we-chip.is-bad {
+  opacity: 0.65;
+  border: 1px dashed rgba(250, 140, 22, 0.6);
 }
 .player__roads {
   display: flex;

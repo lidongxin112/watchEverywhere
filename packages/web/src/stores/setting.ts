@@ -21,6 +21,12 @@ export interface PlayerSetting {
   /** 记住播放进度 */
   resume: boolean;
   playbackRate: number;
+  /** 音量（0~1） */
+  volume?: number;
+  /** 跳过片头（秒，0 表示不跳） */
+  skipIntro?: number;
+  /** 跳过片尾（秒，0 表示不跳） */
+  skipOutro?: number;
 }
 
 export interface SettingData {
@@ -43,7 +49,10 @@ const DEFAULTS: SettingData = {
   player: {
     autoNext: true,
     resume: true,
-    playbackRate: 1
+    playbackRate: 1,
+    volume: 1,
+    skipIntro: 0,
+    skipOutro: 0
   }
 };
 

@@ -20,6 +20,7 @@ import { browserFetch } from './browser';
 import { fetchDanmaku } from './danmaku';
 import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { clearPageCache, readPageCache, writePageCache } from './page-cache';
+import { repairResources } from './repair';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
@@ -646,6 +647,9 @@ export const routes: Record<string, Handler> = {
   ...liveRoutes,
 
   // ======================= 缓存 =======================
+  /** 修复收藏/历史指向已失效规则的问题（按域名重新绑定） */
+  'app/repair-resources': () => repairResources(),
+
   'cache/clear': () => {
     const pages = clearPageCache();
     if (pages) pushLog('info', 'cache', `清理页面缓存 ${pages} 个`);

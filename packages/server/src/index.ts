@@ -14,6 +14,7 @@ import { registerMediaProxy } from './media';
 import { startSubscriptionScheduler } from './subscription';
 import { pushLog } from './logs';
 import { selfHealRules } from './self-heal';
+import { repairResources } from './repair';
 import { startIptv, stopIptv } from './iptv';
 
 /** 打包成单文件可执行程序后 __dirname 由 CJS 提供；开发态用 import.meta.url */
@@ -158,7 +159,14 @@ export function start(port = Number(process.env.PORT) || 8898) {
     if (fs.existsSync(PUBLIC_DIR)) console.log(`  ➜ 页面: http://localhost:${port}/`);
     console.log(`  ➜ 数据目录: ${DATA_DIR}\n`);
     // 规则文件为空/损坏时用内置包自愈
-    selfHealRules().catch((e) => console.warn('[self-heal] 失败', e));
+    selfHealRules()
+      .then(() => {
+        const r = repairResources();
+        if (r.favorites || r.history || r.chapterHistory) {
+          console.log(`[repair] 收藏 ${r.favorites} 条、历史 ${r.history} 条、进度 ${r.chapterHistory} 条已重新绑定规则`);
+        }
+      })
+      .catch((e) => console.warn('[self-heal] 失败', e));
     // 内置 iPTV：就绪后自动添加 / 更新「内置 iPTV」直播源
     startIptv(ensureBuiltinSource).catch((e) => console.warn('[iptv] 启动失败', e));
   });
