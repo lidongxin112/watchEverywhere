@@ -25,6 +25,7 @@ import { installFromMarket, listMarket } from './market';
 import { doubanComments } from './douban';
 import { episodeNumber } from './episode';
 import { probeSources, resolveTorrent, searchMagnet } from './magnet';
+import { closeTorrent, openTorrent, torrentStatus } from './torrent';
 import { readProxyConfig, saveProxyConfig } from './proxy-config';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
@@ -802,6 +803,20 @@ export const routes: Record<string, Handler> = {
 
   /** 磁力搜索：Mikan / Nyaa / ACG.RIP（只给磁力链接，不做离线下载） */
   'magnet/search': ({ keyword, sources }) => searchMagnet(String(keyword || ''), Array.isArray(sources) ? sources : undefined),
+
+  // ======================= 磁力在线播放 =======================
+  /** 打开磁力，返回文件列表 */
+  'torrent/open': ({ magnet }) => openTorrent(String(magnet || '')),
+
+  /** 会话进度（peers / 已下载 / 速度） */
+  'torrent/status': ({ infoHash }) => torrentStatus(String(infoHash || '')),
+
+  'torrent/close': ({ infoHash }) => closeTorrent(String(infoHash || '')),
+
+  /** 取播放地址（前端 <video> 直接用） */
+  'torrent/play-url': ({ infoHash, index }) => ({
+    url: `/api/torrent/stream?hash=${encodeURIComponent(String(infoHash || ''))}&index=${Number(index) || 0}`
+  }),
 
   /** 磁力源可用性 + 当前代理 */
   'magnet/sources': () => probeSources(),

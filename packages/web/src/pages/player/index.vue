@@ -73,6 +73,13 @@
 
       <div class="player__bar">
         <div class="player__title we-ellipsis" :title="`${name} ${current?.name || ''}`">
+          <template v-if="isTorrent">
+            <b>{{ q.tName || '磁力播放' }}</b>
+            <span v-if="torrentInfo" class="we-muted" style="font-size: 12px">
+              {{ torrentInfo.peers }} peers · {{ (torrentInfo.progress * 100).toFixed(1) }}% ·
+              {{ (torrentInfo.speed / 1048576).toFixed(2) }} MB/s
+            </span>
+          </template>
           <b>{{ name }}</b>
           <span class="we-muted">{{ current?.name }}</span>
         </div>
@@ -195,6 +202,8 @@ import {
   getBiliSubtitles,
   getContent,
   getDanmaku,
+  torrentPlayUrl,
+  torrentStatus,
   postClientLog,
   saveChapterHistory,
   type ChapterItem,
@@ -220,6 +229,10 @@ const setting = useSettingStore();
 
 const q = route.query as Record<string, string>;
 const { ruleId, filePath, chapterPath, name } = q;
+/** 磁力在线播放：/player?torrent=<infoHash>&tIndex=<index>&tName=<文件名> */
+const torrentHash = q.torrent || '';
+const torrentIndex = Number(q.tIndex || 0);
+const isTorrent = !!torrentHash;
 
 const videoRef = ref<HTMLVideoElement>();
 const episodesRef = ref<HTMLElement>();
@@ -227,6 +240,23 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 磁力状态 ----------------
+const torrentInfo = ref<{ peers: number; progress: number; speed: number } | null>(null);
+let torrentTimer: number | null = null;
+
+function startTorrentPolling() {
+  if (!isTorrent) return;
+  if (torrentTimer) clearInterval(torrentTimer);
+  const tick = async () => {
+    const res = await torrentStatus(torrentHash);
+    if (res.code === 0 && res.data) {
+      torrentInfo.value = { peers: res.data.peers, progress: res.data.progress, speed: res.data.speed };
+    }
+  };
+  void tick();
+  torrentTimer = window.setInterval(tick, 3000);
+}
+
 // ---------------- 换源 ----------------
 const sourceOpen = ref(false);
 const sameSources = ref<SameSource[]>([]);
@@ -785,6 +815,22 @@ async function play(url: string) {
 async function init(noCache = false) {
   if (!noCache) autoRetried = false;
   loading.value = true;
+
+  // 磁力在线播放：地址是服务端的边下边播流，不需要走规则解析
+  if (isTorrent) {
+    playUrl.value = torrentPlayUrl(torrentHash, torrentIndex);
+    document.title = `${q.tName || '磁力播放'} - watchEverywhere`;
+    loading.value = false;
+    errMsg.value = '';
+    startTorrentPolling();
+    await nextTick();
+    if (videoRef.value) {
+      await play(playUrl.value);
+      watchStall();
+    }
+    return;
+  }
+
   errMsg.value = '';
   iframeMode.value = false;
   chapters.currentPath = chapterPath;
@@ -818,6 +864,7 @@ async function init(noCache = false) {
 /** 播放迟迟不进画面：记日志 + 给提示，避免“黑屏 0:00”没有任何线索 */
 function watchStall() {
   if (stallTimer) clearTimeout(stallTimer);
+  if (torrentTimer) clearInterval(torrentTimer);
   sr?.destroy();
   sr = null;
   stalled.value = false;
@@ -1106,6 +1153,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onResize);
   if (danmakuTimer) clearTimeout(danmakuTimer);
   if (stallTimer) clearTimeout(stallTimer);
+  if (torrentTimer) clearInterval(torrentTimer);
   sr?.destroy();
   sr = null;
   window.removeEventListener('keydown', onKey);

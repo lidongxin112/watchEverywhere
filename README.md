@@ -405,6 +405,18 @@ node scripts/stop.mjs --hard   # 卡死时强制 SIGKILL
 不会碰你机器上其他 node 程序。之前反复 `npm run dev` 留下的多份 vite / tsx 也能一次清干净。
 
 
+
+### 磁力在线播放（边下边播）
+
+磁力结果行点「在线看」→ 服务端打开种子、列出文件 → 选一个直接播，不用先下载完。
+
+- `torrent/open`：torrent-stream 打开磁力/种子，返回文件列表（标注能否直接播）
+- `GET /api/torrent/stream?hash=&index=`：按需拉取分片，支持 `Range`；播放器里能看 `peers / 进度 / 速度`
+- **mkv/avi 等浏览器不认的容器**：服务端用 ffmpeg 无损转封装成 fMP4（`-c copy`，不重编码），再流给 `<video>`
+- 会话按 infoHash 缓存，闲置 10 分钟自动关闭；同时最多 3 个会话
+- 需要能连到 peer（DHT + UDP tracker）。**HTTP 代理帮不上 P2P**，要走 TUN/全局模式；一个 peer 都连不上时会明确报「连接磁力超时（没有找到 peer）」
+
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。

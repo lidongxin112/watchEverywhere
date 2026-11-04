@@ -4,6 +4,7 @@ import type Router from '@koa/router';
 import { rewriteM3u8 } from './live-parser';
 import { sign } from './secret';
 import { pushLog } from './logs';
+import { streamTorrentFile } from './torrent';
 
 /** 日志里只留 CDN 域名 + 路径，避免把整条签名地址刷进缓冲 */
 function finalUrlForLog(u: string) {
@@ -86,6 +87,45 @@ function readAll(stream: Readable, limit = 8 * 1024 * 1024): Promise<string> {
     });
     stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     stream.on('error', reject);
+  });
+}
+
+export function registerTorrentStream(router: Router) {
+  router.get('/torrent/stream', async (ctx) => {
+    const hash = String(ctx.query.hash || '');
+    const index = Number(ctx.query.index || 0);
+    if (!hash) {
+      ctx.status = 400;
+      ctx.body = 'missing hash';
+      return;
+    }
+    let range: { start: number; end: number } | undefined;
+    const raw = ctx.get('range');
+    if (raw) {
+      const m = /bytes=(\d*)-(\d*)/.exec(raw);
+      if (m) {
+        const start = m[1] ? Number(m[1]) : 0;
+        const end = m[2] ? Number(m[2]) : Number.MAX_SAFE_INTEGER;
+        if (Number.isFinite(start)) range = { start, end };
+      }
+    }
+    try {
+      const { stream, mime, transcoded } = streamTorrentFile(hash, index, range);
+      ctx.status = range ? 206 : 200;
+      ctx.set('Content-Type', mime);
+      ctx.set('Accept-Ranges', transcoded ? 'none' : 'bytes');
+      ctx.set('Cache-Control', 'no-store');
+      if (range && !transcoded) {
+        ctx.set('Content-Range', `bytes ${range.start}-${range.end}/*`);
+      }
+      ctx.body = stream;
+      ctx.res.on('close', () => stream.destroy?.());
+      stream.on('error', () => ctx.res.destroy());
+    } catch (e: any) {
+      pushLog('warn', 'torrent/stream', String(e?.message || e));
+      ctx.status = 502;
+      ctx.body = String(e?.message || 'stream failed');
+    }
   });
 }
 

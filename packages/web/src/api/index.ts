@@ -568,3 +568,25 @@ export const probeMagnetSources = () =>
 
 export const readMagnetProxy = () => request<{ url: string } | null>('magnet/proxy-read', {}, false);
 export const saveMagnetProxy = (url: string) => request<{ url: string }>('magnet/proxy-save', { url }, false);
+
+// ======================= 磁力在线播放 =======================
+
+export interface TorrentFileItem {
+  index: number;
+  name: string;
+  length: number;
+  playable: boolean;
+  kind: 'video' | 'audio' | 'other';
+}
+
+export const openTorrent = (magnet: string) =>
+  request<{ infoHash: string; files: TorrentFileItem[]; name: string }>('torrent/open', { magnet }, false);
+export const torrentStatus = (infoHash: string) =>
+  request<{ infoHash: string; progress: number; peers: number; downloaded: number; speed: number } | null>(
+    'torrent/status',
+    { infoHash },
+    false
+  );
+export const closeTorrent = (infoHash: string) => request('torrent/close', { infoHash }, false);
+export const torrentPlayUrl = (infoHash: string, index: number) =>
+  `/api/torrent/stream?hash=${encodeURIComponent(infoHash)}&index=${index}`;

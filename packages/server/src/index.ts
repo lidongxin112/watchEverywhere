@@ -10,7 +10,7 @@ import { routes } from './api';
 import { DATA_DIR } from './store';
 import { flushAll } from './db';
 import { ensureBuiltinSource, liveSourcesStore, registerLiveProxy } from './live';
-import { registerMediaProxy } from './media';
+import { registerMediaProxy, registerTorrentStream } from './media';
 import { registerAiStream } from './ai';
 import { startSubscriptionScheduler } from './subscription';
 import { startWatchScheduler } from './watch';
@@ -56,6 +56,7 @@ export function createServer() {
   // 直播播放代理（GET，返回清单 / 视频流）
   registerLiveProxy(router);
   registerMediaProxy(router);
+  registerTorrentStream(router);
   // AI 问片：流式对话
   registerAiStream(router);
   startSubscriptionScheduler();

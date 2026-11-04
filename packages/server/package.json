@@ -17,6 +17,7 @@
     "axios": "^1.7.9",
     "koa": "^2.15.3",
     "puppeteer-core": "^25.16.0",
+    "torrent-stream": "^1.2.1",
     "tsx": "^4.19.2"
   },
   "devDependencies": {

@@ -31,6 +31,23 @@
       </template>
     </div>
 
+    <a-modal v-model:open="pickOpen" title="选择要播放的文件" :footer="null" :width="560">
+      <a-spin v-if="pickLoading" />
+      <template v-else>
+        <div v-if="pickError" class="we-muted">{{ pickError }}</div>
+        <div v-for="f in pickFiles" :key="f.index" class="torrent-file">
+          <div class="torrent-file__main">
+            <div class="torrent-file__name" :title="f.name">{{ f.name }}</div>
+            <div class="we-muted torrent-file__meta">
+              {{ (f.length / 1048576).toFixed(0) }} MB · {{ f.kind }}{{ f.playable ? '' : ' · 将转封装为 MP4' }}
+            </div>
+          </div>
+          <a-button size="small" type="primary" @click="startPlay(f)">播放</a-button>
+        </div>
+        <a-empty v-if="!pickFiles.length && !pickError" description="这个种子里没有视频文件" />
+      </template>
+    </a-modal>
+
     <a-table
       v-if="list.length"
       size="small"
@@ -57,6 +74,14 @@
               生成磁力
             </a-button>
             <a-button v-if="record.torrentUrl" size="small" @click="copy(record.torrentUrl)">种子链接</a-button>
+            <a-button
+              v-if="record.magnet || record.torrentUrl"
+              size="small"
+              :loading="opening === record.title"
+              @click="playOnline(record)"
+            >
+              在线看
+            </a-button>
             <a v-if="record.detailUrl" :href="record.detailUrl" target="_blank" rel="noreferrer">详情</a>
           </a-space>
         </template>
@@ -69,7 +94,15 @@
 import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
-import { probeMagnetSources, resolveMagnet, searchMagnet, type MagnetItem, type MagnetSourceProbe } from '@/api';
+import {
+  openTorrent,
+  probeMagnetSources,
+  resolveMagnet,
+  searchMagnet,
+  type MagnetItem,
+  type MagnetSourceProbe,
+  type TorrentFileItem
+} from '@/api';
 
 const route = useRoute();
 const router = useRouter();
@@ -80,6 +113,45 @@ const searched = ref(false);
 const list = ref<MagnetItem[]>([]);
 const sourceStatus = ref<{ name: string; count: number; ok: boolean; ms: number; error?: string }[]>([]);
 const pending = ref(false);
+const pickOpen = ref(false);
+const pickLoading = ref(false);
+const pickError = ref('');
+const pickFiles = ref<TorrentFileItem[]>([]);
+const pickHash = ref('');
+const opening = ref('');
+
+/** 在线播放：先拿到磁力，再让服务端打开种子列文件 */
+async function playOnline(row: MagnetItem) {
+  opening.value = row.title;
+  pickOpen.value = true;
+  pickLoading.value = true;
+  pickError.value = '';
+  pickFiles.value = [];
+  try {
+    let magnet = row.magnet;
+    if (!magnet && row.torrentUrl) {
+      const rv = await resolveMagnet({ torrentUrl: row.torrentUrl, title: row.title });
+      if (rv.code !== 0 || !rv.data) throw new Error(rv.msg || '生成磁力失败');
+      magnet = rv.data.magnet;
+      row.magnet = magnet;
+    }
+    const res = await openTorrent(magnet);
+    if (res.code !== 0 || !res.data) throw new Error(res.msg || '打开种子失败（可能没有 peer）');
+    pickHash.value = res.data.infoHash;
+    pickFiles.value = res.data.files.filter((f) => f.kind === 'video' || f.kind === 'audio');
+    if (!pickFiles.value.length) pickError.value = '这个种子里没有可播放的音视频文件';
+  } catch (e: any) {
+    pickError.value = String(e?.message || e);
+  } finally {
+    pickLoading.value = false;
+    opening.value = '';
+  }
+}
+
+function startPlay(f: TorrentFileItem) {
+  pickOpen.value = false;
+  router.push({ path: '/player', query: { torrent: pickHash.value, tIndex: String(f.index), tName: f.name } });
+}
 let retryTimer: number | null = null;
 const resolving = ref('');
 const sources = ref<string[]>(['mikan', 'nyaa', 'dmhy']);
@@ -200,6 +272,24 @@ onMounted(() => {
 .magnet__status {
   font-size: 12px;
   margin-bottom: 8px;
+}
+.torrent-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.25));
+}
+.torrent-file__main {
+  flex: 1;
+  min-width: 0;
+}
+.torrent-file__name {
+  font-size: 13px;
+  word-break: break-all;
+}
+.torrent-file__meta {
+  font-size: 12px;
 }
 .magnet__title {
   font-size: 13px;
