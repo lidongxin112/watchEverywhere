@@ -18,6 +18,7 @@ const router = createRouter({
         },
         { path: 'ai', name: 'ai', component: () => import('@/pages/ai/index.vue'), meta: { keepAlive: true, title: 'AI 问片' } },
         { path: 'live', name: 'live', component: () => import('@/pages/live/index.vue'), meta: { title: '直播' } },
+        { path: 'magnet', name: 'magnet', component: () => import('@/pages/magnet/index.vue'), meta: { title: '磁力' } },
         { path: 'chapter', name: 'chapter', component: () => import('@/pages/chapter/index.vue'), meta: { title: '目录' } },
         { path: 'content', name: 'content', component: () => import('@/pages/content/index.vue'), meta: { title: '阅读' } },
         { path: 'player', name: 'player', component: () => import('@/pages/player/index.vue'), meta: { title: '播放' } },

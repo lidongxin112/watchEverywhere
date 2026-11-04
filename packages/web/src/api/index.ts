@@ -495,3 +495,25 @@ export interface DoubanResult {
 
 export const getDoubanComments = (data: { name: string; year?: string }) =>
   request<DoubanResult>('meta/douban-comments', data, false);
+
+// ======================= 磁力搜索 =======================
+
+export interface MagnetItem {
+  title: string;
+  magnet: string;
+  infohash: string;
+  size: string;
+  sizeBytes?: number;
+  seeders?: number;
+  leechers?: number;
+  published?: string;
+  source: string;
+  detailUrl?: string;
+  torrentUrl?: string;
+}
+
+export const searchMagnet = (data: { keyword: string; sources?: string[] }) =>
+  request<MagnetItem[]>('magnet/search', data, false);
+
+export const resolveMagnet = (data: { torrentUrl: string; title: string }) =>
+  request<{ infohash: string; magnet: string }>('magnet/resolve', data, false);

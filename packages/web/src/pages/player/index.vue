@@ -68,6 +68,8 @@
         </div>
       </div>
 
+      <canvas v-show="srOn" ref="srCanvasRef" class="player__sr"></canvas>
+
       <div class="player__bar">
         <div class="player__title we-ellipsis" :title="`${name} ${current?.name || ''}`">
           <b>{{ name }}</b>
@@ -99,6 +101,23 @@
             </template>
           </a-dropdown>
           <input ref="subFileRef" type="file" accept=".srt,.vtt,.ass,.ssa,text/plain" style="display: none" @change="onSubtitleFile" />
+          <a-dropdown>
+            <a-button size="small" :type="srOn ? 'primary' : 'default'">
+              超分{{ srOn ? ' ' + (srScale === 1.5 ? '1.5' : srScale) + 'x' : '' }}
+            </a-button>
+            <template #overlay>
+              <a-menu @click="onSuperResMenu">
+                <a-menu-item key="off">关闭</a-menu-item>
+                <a-menu-item key="s0.5">柔和（锐化 0.5）</a-menu-item>
+                <a-menu-item key="s1.2">标准（锐化 1.2）</a-menu-item>
+                <a-menu-item key="s2">强（锐化 2.0）</a-menu-item>
+                <a-menu-divider />
+                <a-menu-item key="k1.5">1.5 倍</a-menu-item>
+                <a-menu-item key="k2">2 倍</a-menu-item>
+                <a-menu-item key="k3">3 倍</a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
           <a-tooltip title="画中画（小窗播放）">
             <a-button size="small" :disabled="iframeMode || !playUrl" @click="togglePip"><PictureOutlined /></a-button>
           </a-tooltip>
@@ -165,6 +184,7 @@ import { cuesFromBili, findCue, isAssSubtitle, parseAss, parseSubtitle, type Cue
 import { createAdFilterLoader } from '@/utils/hls-adloader';
 import ExternalPlayerMenu from '@/components/ExternalPlayerMenu.vue';
 import { loadSkipConfig, recordIntroSample, recordOutroSample, saveSkipConfig, suggestSkip } from '@/utils/skip-learn';
+import { SuperResolver, type SuperResScale } from '@/utils/superres';
 import { useChaptersStore } from '@/stores/chapters';
 import { useSettingStore } from '@/stores/setting';
 import { useBus, EVENT_CHAPTERS_BOX } from '@/utils/bus';
@@ -183,6 +203,67 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 超分 ----------------
+const srCanvasRef = ref<HTMLCanvasElement>();
+const srOn = ref(false);
+const srScale = ref<SuperResScale>(2);
+const srStrength = ref(1.2);
+let sr: SuperResolver | null = null;
+
+async function enableSuperRes() {
+  const video = videoRef.value;
+  const canvas = srCanvasRef.value;
+  if (!video || !canvas) return;
+  if (!SuperResolver.supported()) {
+    message.warning('当前浏览器不支持 WebGL2，无法开启超分');
+    return;
+  }
+  try {
+    if (!sr) {
+      sr = new SuperResolver(video, canvas);
+      sr.setStrength(srStrength.value);
+    }
+    sr.setScale(srScale.value);
+    await sr.start(srScale.value);
+    srOn.value = true;
+    if (videoRef.value) videoRef.value.style.visibility = 'hidden';
+    message.success(`已开启超分（${srScale.value}x）`);
+  } catch (e: any) {
+    message.error(String(e?.message || e));
+  }
+}
+
+function disableSuperRes() {
+  sr?.stop();
+  srOn.value = false;
+  if (videoRef.value) videoRef.value.style.visibility = '';
+}
+
+function onSuperResMenu(e: any) {
+  const key = String(e.key);
+  if (key === 'off') {
+    disableSuperRes();
+    return;
+  }
+  if (key.startsWith('s')) {
+    srStrength.value = Number(key.slice(1));
+    sr?.setStrength(srStrength.value);
+    message.success(`锐化强度 ${srStrength.value}`);
+    return;
+  }
+  if (key.startsWith('k')) {
+    const scale = Number(key.slice(1)) as SuperResScale;
+    srScale.value = scale;
+    sr?.setScale(scale);
+    if (srOn.value) {
+      sr?.stop();
+      void sr?.start(scale);
+    } else {
+      void enableSuperRes();
+    }
+  }
+}
+
 // ---------------- 字幕 ----------------
 const subFileRef = ref<HTMLInputElement>();
 const subtitleCues = ref<Cue[]>([]);
@@ -665,6 +746,8 @@ async function init(noCache = false) {
 /** 播放迟迟不进画面：记日志 + 给提示，避免“黑屏 0:00”没有任何线索 */
 function watchStall() {
   if (stallTimer) clearTimeout(stallTimer);
+  sr?.destroy();
+  sr = null;
   stalled.value = false;
   stallTimer = window.setTimeout(() => {
     const v = videoRef.value;
@@ -951,6 +1034,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onResize);
   if (danmakuTimer) clearTimeout(danmakuTimer);
   if (stallTimer) clearTimeout(stallTimer);
+  sr?.destroy();
+  sr = null;
   window.removeEventListener('keydown', onKey);
 });
 </script>
@@ -1038,6 +1123,15 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #fff;
   background: rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.player__sr {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  z-index: 2;
   pointer-events: none;
 }
 .player__subtitle {

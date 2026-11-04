@@ -23,6 +23,7 @@ import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
 import { installFromMarket, listMarket } from './market';
 import { doubanComments } from './douban';
+import { resolveTorrent, searchMagnet } from './magnet';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
 import { aiRoutes } from './ai';
@@ -746,6 +747,12 @@ export const routes: Record<string, Handler> = {
 
   // ======================= AI 问片 =======================
   ...aiRoutes,
+
+  /** 磁力搜索：Mikan / Nyaa / ACG.RIP（只给磁力链接，不做离线下载） */
+  'magnet/search': ({ keyword, sources }) => searchMagnet(String(keyword || ''), Array.isArray(sources) ? sources : undefined),
+
+  /** 种子 → 磁力（按需解析，避免搜索时等十几秒） */
+  'magnet/resolve': ({ torrentUrl, title }) => resolveTorrent(String(torrentUrl || ''), String(title || '')),
 
   /** 豆瓣短评（按片名找 subject 再取热门短评） */
   'meta/douban-comments': ({ name, year }) => doubanComments(String(name || ''), year ? String(year) : undefined),

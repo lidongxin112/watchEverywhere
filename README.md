@@ -317,6 +317,35 @@ docker compose up -d --build
 | 追番订阅 | 只做「本地规则里的集数变化」，不接磁力站 / 网盘离线下载 |
 | 磁力搜索 / 网盘离线 / 观影室 / WebTV / 超分 | 未做 |
 
+
+## 磁力搜索 / 视频超分
+
+### 磁力搜索（Mikan / Nyaa / ACG.RIP）
+
+- 侧边栏「磁力」页：按番剧名搜索，结果按做种数排序，显示来源 / 大小 / 发布时间
+- **只做搜索与磁力生成**：不接离线下载、不转存网盘
+- Mikan 的 RSS 只给 `.torrent`，服务端内置极简 bencode 解析，取 `info` 字典算 sha1 得到 infohash 再拼磁力（`magnet/resolve` 按需生成，避免搜索时等十几秒）
+- 多镜像：`mikanime.tv` / `mikanani.kas.pub` / `mikanani.me` 并行取第一个可用的；每个源单独限时，被墙的站点不会拖住整个搜索
+- 结果缓存 15 分钟，空结果不缓存（避免一次超时锁死）
+
+### 视频超分（WebGL2）
+
+播放器工具栏「超分」：
+
+| 选项 | 说明 |
+| --- | --- |
+| 关闭 | 恢复原始 video |
+| 柔和 / 标准 / 强 | 锐化强度 0.5 / 1.2 / 2.0 |
+| 1.5x / 2x / 3x | 放大倍率（按容器尺寸 + devicePixelRatio 渲染） |
+
+实现要点（`utils/superres.ts`）：
+
+- `texImage2D(video)` 每帧上传画面 → 片元着色器做「3×3 高斯模糊 + 反锐化掩膜」
+- 用 Sobel 式梯度判断边缘：边缘处强锐化、平坦区按 `denoise` 混合邻域均值，压掉噪点和色带
+- 末段轻微提对比度，避免放大后发灰
+- 用 `requestVideoFrameCallback` 跟帧（不支持时退回 rAF），`preserveDrawingBuffer` 便于截图/像素校验
+- 浏览器不支持 WebGL2 时按钮给出提示而不是白屏
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。
