@@ -7,7 +7,9 @@ COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
-RUN npm ci
+COPY scripts ./scripts
+# postinstall 会跑 scripts/setup-iptv.mjs，先把脚本拷进来；容器里不需要 iPTV 预置
+RUN npm ci --ignore-scripts
 
 COPY . .
 RUN npm run build
