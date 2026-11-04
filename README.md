@@ -392,6 +392,19 @@ WE_PROXY=http://127.0.0.1:7890 npm run dev:server
 > 需要把这一组切到节点选择，或给 `nyaa.si`、`sukebei.nyaa.si`、`dmhy.org`、`acg.rip` 各加一条指向代理节点的规则。
 
 
+
+## 启动 / 停止
+
+```bash
+npm run dev      # 服务 8898 + 前端 5173
+npm run stop     # 一键停掉服务、前端 dev、内置 iPTV(1905)，以及测试实例端口
+node scripts/stop.mjs --hard   # 卡死时强制 SIGKILL
+```
+
+`npm run stop` 只杀**本项目** node_modules 下的进程和 8898 / 5173-5190 / 8990-8999 / 1905 这几个端口上的监听者，
+不会碰你机器上其他 node 程序。之前反复 `npm run dev` 留下的多份 vite / tsx 也能一次清干净。
+
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。
