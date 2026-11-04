@@ -124,13 +124,14 @@ function applyJson() {
 }
 
 function debugField(item: FormItem) {
-  const value = String(form[item.prop] ?? '');
-  if (/url$/i.test(item.prop) || item.prop === 'searchUrl') {
+  const prop = String(item.prop);
+  const value = String((form as any)[prop] ?? '');
+  if (/url$/i.test(prop) || prop === 'searchUrl') {
     mode.value = 'url';
     urlRef.value?.setUrl(value);
   } else {
     mode.value = 'text';
-    textRef.value?.setRule(value, /list|roads/i.test(item.prop));
+    textRef.value?.setRule(value, /list|roads/i.test(String(item.prop)));
   }
 }
 

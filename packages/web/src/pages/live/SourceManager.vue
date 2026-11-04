@@ -83,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import { getIptvStatus, getLiveSources, iptvAdminUrl, removeLiveSource, saveLiveSource, type IptvStatus, type LiveSource } from '@/api';
 
@@ -91,7 +91,7 @@ const emit = defineEmits<{ changed: [string?] }>();
 
 const sources = ref<LiveSource[]>([]);
 const iptv = ref<IptvStatus | null>(null);
-const editingBuiltin = computed(() => !!sources.value.find((s) => s.id === form.id)?.builtin);
+const editingBuiltin = computed(() => !!sources.value.find((s) => s.id === form.value.id)?.builtin);
 
 const iptvAlert = computed(() => {
   const s = iptv.value!;
@@ -109,7 +109,7 @@ const iptvAlert = computed(() => {
 });
 const saving = ref(false);
 const empty = () => ({ id: '', name: '', url: '', epgUrl: '', proxy: true });
-const form = reactive<{ id: string; name: string; url: string; epgUrl: string; proxy: boolean }>(empty());
+const form = ref<{ id: string; name: string; url: string; epgUrl: string; proxy: boolean }>(empty());
 
 async function load() {
   const [res, st] = await Promise.all([getLiveSources(), getIptvStatus()]);
@@ -126,14 +126,14 @@ function edit(s: LiveSource) {
 }
 
 function fillIptv(path: string) {
-  form.url = `http://localhost:1905/${path}`;
-  if (!form.name) form.name = 'iPTV';
+  form.value.url = `http://localhost:1905/${path}`;
+  if (!form.value.name) form.value.name = 'iPTV';
 }
 
 async function save() {
-  if (!form.url.trim()) return message.warning('请填写订阅地址');
+  if (!form.value.url.trim()) return message.warning('请填写订阅地址');
   saving.value = true;
-  const res = await saveLiveSource({ ...form, id: form.id || undefined });
+  const res = await saveLiveSource({ ...form, id: form.value.id || undefined });
   saving.value = false;
   if (res.code === 0) {
     message.success('已保存');
@@ -145,7 +145,7 @@ async function save() {
 
 async function remove(id: string) {
   await removeLiveSource(id);
-  if (form.id === id) reset();
+  if (form.value.id === id) reset();
   await load();
   emit('changed');
 }

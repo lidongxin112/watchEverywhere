@@ -21,6 +21,7 @@ import { fetchDanmaku } from './danmaku';
 import { clearLogs, getLogs, pushLog, readPersistedLogs } from './logs';
 import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
+import { fetchBiliSubtitle, listBiliSubtitles } from './subtitle';
 import { checkAll, checkSubscription, createSubscription, subscriptionStore } from './subscription';
 import { APP_VERSION, checkUpdate, detectPlatform, fetchNotices, isStandalone } from './update';
 import { applyUpdateAndRestart, downloadUpdate, readPending } from './updater';
@@ -114,6 +115,12 @@ export const routes: Record<string, Handler> = {
     const list = await fetchDanmaku(id);
     return { cid: String(id || ''), count: list.length, list };
   },
+
+  /** 字幕：B 站 CC 列表（有 Cookie 才拿得到） */
+  'subtitle/bili-list': ({ cid, bvid, epId, cookie }) => listBiliSubtitles({ cid, bvid, epId, cookie }),
+
+  /** 字幕：拉取 B 站字幕内容并转成 cue 列表 */
+  'subtitle/bili-fetch': ({ url }) => fetchBiliSubtitle(String(url || '')),
 
   // ======================= 版本 / 更新 =======================
   'app/info': () => ({

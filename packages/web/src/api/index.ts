@@ -286,3 +286,22 @@ export const getAppLogs = () => request<AppLogs>('app/logs', {}, false);
 /** 前端错误上报（写进服务端诊断日志） */
 export const postClientLog = (data: { level?: string; scope?: string; message: string; extra?: Record<string, any> }) =>
   request('app/client-log', data, false);
+
+// ======================= 字幕 =======================
+
+export interface SubtitleMeta {
+  lan: string;
+  lan_doc: string;
+  url: string;
+}
+
+export interface SubtitleCue {
+  from: number;
+  to: number;
+  text: string;
+}
+
+export const getBiliSubtitles = (data: { cid?: string; bvid?: string; epId?: string; cookie?: string }) =>
+  request<{ code: number; subtitles: SubtitleMeta[]; msg?: string }>('subtitle/bili-list', data, false);
+
+export const fetchBiliSubtitle = (url: string) => request<SubtitleCue[]>('subtitle/bili-fetch', { url }, false);

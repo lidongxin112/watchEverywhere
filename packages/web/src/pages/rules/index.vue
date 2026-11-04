@@ -177,7 +177,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { message, Modal } from 'ant-design-vue';
 import { PlusOutlined, DownOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons-vue';
 import { CONTENT_TYPES, contentTypeLabel, type Rule } from '@/constants';
@@ -218,7 +218,7 @@ const subSaving = ref(false);
 const subChecking = ref(false);
 const subCheckingId = ref('');
 const subscriptions = ref<RuleSubscription[]>([]);
-const subForm = reactive({ url: '', name: '', autoUpdate: true });
+const subForm = ref({ url: '', name: '', autoUpdate: true });
 
 // ---------------- 备份 ----------------
 const backupOpen = ref(false);
@@ -249,13 +249,13 @@ function openSubscriptions() {
   loadSubscriptions();
 }
 async function saveSubscription() {
-  if (!subForm.url.trim()) return message.warning('先填订阅地址');
+  if (!subForm.value.url.trim()) return message.warning('先填订阅地址');
   subSaving.value = true;
-  const res = await apiSaveSubscription({ url: subForm.url.trim(), name: subForm.name.trim(), autoUpdate: subForm.autoUpdate });
+  const res = await apiSaveSubscription({ url: subForm.value.url.trim(), name: subForm.value.name.trim(), autoUpdate: subForm.value.autoUpdate });
   subSaving.value = false;
   if (res.code !== 0) return message.error(res.msg || '保存失败');
-  subForm.url = '';
-  subForm.name = '';
+  subForm.value.url = '';
+  subForm.value.name = '';
   await loadSubscriptions();
   if (res.data?.id) await checkSubscription(res.data.id);
 }
@@ -290,7 +290,7 @@ async function removeSubscription(id: string) {
 const importText = ref('');
 const importing = ref(false);
 const cmsOpen = ref(false);
-const cmsForm = reactive({ name: '', url: '' });
+const cmsForm = ref({ name: '', url: '' });
 const editOpen = ref(false);
 const editId = ref('');
 
@@ -383,13 +383,13 @@ async function doImport() {
 
 async function doImportCMS() {
   importing.value = true;
-  const res = await importCMS(cmsForm.url.trim(), cmsForm.name.trim());
+  const res = await importCMS(cmsForm.value.url.trim(), cmsForm.value.name.trim());
   importing.value = false;
   if (res.code === 0) {
     message.success('已添加资源站规则');
     cmsOpen.value = false;
-    cmsForm.name = '';
-    cmsForm.url = '';
+    cmsForm.value.name = '';
+    cmsForm.value.url = '';
     refresh();
   }
 }

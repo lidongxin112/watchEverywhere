@@ -36,7 +36,7 @@
         ></video>
 
         <!-- 需要用户手势才能播放时显示 -->
-        <div v-if="needTap" class="player__tap" @click="startPlayback">
+        <div v-if="needTap" class="player__tap" @click="startPlayback()">
           <PlayCircleOutlined class="player__tap-icon" />
           <div class="player__tap-text">点击播放</div>
         </div>
@@ -47,6 +47,9 @@
             <a-button size="small" style="margin-left: 8px" @click="init(true)">重新解析</a-button>
           </div>
         </div>
+
+        <!-- 字幕层 -->
+        <div v-if="subtitleText" class="player__subtitle">{{ subtitleText }}</div>
 
         <!-- 弹幕层 -->
         <div v-show="danmakuOn && danmakuVisible.length" class="player__danmaku">
@@ -77,6 +80,22 @@
           <a-button v-if="danmakuCid" size="small" :type="danmakuOn ? 'primary' : 'default'" @click="toggleDanmaku">
             弹幕 {{ danmakuOn ? '开' : '关' }}
           </a-button>
+          <a-dropdown>
+            <a-button size="small" :type="subtitleCues.length ? 'primary' : 'default'">
+              字幕{{ subtitleName ? ' · ' + subtitleName : '' }}
+            </a-button>
+            <template #overlay>
+              <a-menu>
+                <a-menu-item key="local" @click="pickSubtitle">加载本地字幕（.srt / .vtt）</a-menu-item>
+                <a-menu-item key="bili" @click="loadBiliSubtitle">从 B 站获取 CC 字幕</a-menu-item>
+                <a-menu-item v-if="subtitleCues.length" key="delay-" @click="shiftSubtitle(-0.5)">字幕延后 0.5s</a-menu-item>
+                <a-menu-item v-if="subtitleCues.length" key="delay+" @click="shiftSubtitle(0.5)">字幕提前 0.5s</a-menu-item>
+                <a-menu-divider v-if="subtitleCues.length" />
+                <a-menu-item v-if="subtitleCues.length" key="off" @click="clearSubtitle">关闭字幕</a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
+          <input ref="subFileRef" type="file" accept=".srt,.vtt,text/plain" style="display: none" @change="onSubtitleFile" />
           <a-tooltip title="画中画（小窗播放）">
             <a-button size="small" :disabled="iframeMode || !playUrl" @click="togglePip"><PictureOutlined /></a-button>
           </a-tooltip>
@@ -122,9 +141,25 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { message } from 'ant-design-vue';
-import { StepBackwardOutlined, StepForwardOutlined, ExportOutlined } from '@ant-design/icons-vue';
+import {
+  ExportOutlined,
+  PictureOutlined,
+  PlayCircleOutlined,
+  StepBackwardOutlined,
+  StepForwardOutlined
+} from '@ant-design/icons-vue';
 import type Hls from 'hls.js';
-import { getContent, saveChapterHistory, type ChapterItem } from '@/api';
+import {
+  fetchBiliSubtitle,
+  getBiliSubtitles,
+  getContent,
+  getDanmaku,
+  postClientLog,
+  saveChapterHistory,
+  type ChapterItem,
+  type DanmakuItem
+} from '@/api';
+import { cuesFromBili, findCue, parseSubtitle, type Cue } from '@/utils/subtitle';
 import { useChaptersStore } from '@/stores/chapters';
 import { useSettingStore } from '@/stores/setting';
 import { useBus, EVENT_CHAPTERS_BOX } from '@/utils/bus';
@@ -143,6 +178,97 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 字幕 ----------------
+const subFileRef = ref<HTMLInputElement>();
+const subtitleCues = ref<Cue[]>([]);
+const subtitleName = ref('');
+const subtitleText = ref('');
+const subtitleDelay = ref(0);
+const SUB_KEY = () => `we-sub:${ruleId}:${chapterPath}`;
+
+function applySubtitleText(time: number) {
+  subtitleText.value = findCue(subtitleCues.value, time + subtitleDelay.value);
+}
+
+function persistSubtitle() {
+  try {
+    if (!subtitleCues.value.length) localStorage.removeItem(SUB_KEY());
+    else
+      localStorage.setItem(
+        SUB_KEY(),
+        JSON.stringify({ name: subtitleName.value, cues: subtitleCues.value.slice(0, 4000) })
+      );
+  } catch {
+    /* 太大就只保留内存里 */
+  }
+}
+
+function restoreSubtitle() {
+  try {
+    const raw = localStorage.getItem(SUB_KEY());
+    if (!raw) return;
+    const row = JSON.parse(raw);
+    if (Array.isArray(row?.cues) && row.cues.length) {
+      subtitleCues.value = row.cues;
+      subtitleName.value = row.name || '本地字幕';
+      subtitleDelay.value = 0;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function pickSubtitle() {
+  subFileRef.value?.click();
+}
+
+async function onSubtitleFile(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  const text = await file.text();
+  const cues = parseSubtitle(text);
+  if (!cues.length) {
+    message.warning('没解析出字幕，确认是 .srt 或 .vtt');
+    return;
+  }
+  subtitleCues.value = cues;
+  subtitleName.value = file.name.replace(/\.(srt|vtt)$/i, '');
+  subtitleDelay.value = 0;
+  persistSubtitle();
+  message.success(`已加载 ${cues.length} 条字幕`);
+  (e.target as HTMLInputElement).value = '';
+}
+
+async function loadBiliSubtitle() {
+  if (!danmakuCid.value) return message.warning('这不是 B 站的视频');
+  const bvid = String(chapterPath || '').split('|')[1] || '';
+  const res = await getBiliSubtitles({ cid: danmakuCid.value, bvid });
+  if (res.code !== 0 || !res.data) return message.error(res.msg || '获取失败');
+  const list = res.data.subtitles || [];
+  if (!list.length) return message.warning(res.data.msg || '没有字幕（CC 字幕需要登录态 SESSDATA）');
+  const first = list[0];
+  const content = await fetchBiliSubtitle(first.url);
+  if (content.code !== 0 || !content.data?.length) return message.error(content.msg || '字幕内容为空');
+  subtitleCues.value = cuesFromBili(content.data as any);
+  subtitleName.value = first.lan_doc || first.lan;
+  subtitleDelay.value = 0;
+  persistSubtitle();
+  message.success(`已加载 ${subtitleCues.value.length} 条字幕`);
+}
+
+function shiftSubtitle(delta: number) {
+  subtitleDelay.value += delta;
+  subtitleText.value = findCue(subtitleCues.value, (videoRef.value?.currentTime || 0) + subtitleDelay.value);
+}
+
+function clearSubtitle() {
+  subtitleCues.value = [];
+  subtitleName.value = '';
+  subtitleText.value = '';
+  subtitleDelay.value = 0;
+  persistSubtitle();
+}
+
 // ---------------- 线路可用性记忆 ----------------
 const roadStat = ref<Record<string, { ok: number; fail: number; lastFail: number }>>({});
 const roadKey = (id: string) => `we-roadstat:${id}`;
@@ -456,6 +582,7 @@ function updateBuffering() {
 let outroSkipped = false;
 function onTimeUpdate() {
   updateBuffering();
+  if (subtitleCues.value.length) applySubtitleText(videoRef.value?.currentTime || 0);
   // 跳过片尾
   const v = videoRef.value;
   const outro = Number(setting.data.player.skipOutro || 0);
@@ -584,6 +711,7 @@ function onKey(e: KeyboardEvent) {
 useBus(EVENT_CHAPTERS_BOX).on(() => episodesRef.value?.querySelector('.active')?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
 
 onMounted(() => {
+  restoreSubtitle();
   loadRoadStat(ruleId);
   markedOk = false;
   pumpDanmaku();
@@ -664,6 +792,21 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border-radius: 6px;
   pointer-events: auto;
+}
+.player__subtitle {
+  position: absolute;
+  left: 50%;
+  bottom: 8%;
+  transform: translateX(-50%);
+  max-width: 86%;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  z-index: 6;
+  white-space: pre-wrap;
 }
 .player__danmaku {
   position: absolute;
