@@ -23,6 +23,7 @@ import { clearPageCache, readPageCache, writePageCache } from './page-cache';
 import { repairResources } from './repair';
 import { installFromMarket, listMarket } from './market';
 import { doubanComments } from './douban';
+import { episodeNumber } from './episode';
 import { resolveTorrent, searchMagnet } from './magnet';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
@@ -747,6 +748,53 @@ export const routes: Record<string, Handler> = {
 
   // ======================= AI 问片 =======================
   ...aiRoutes,
+
+  /**
+   * 多源同片：按片名在其他规则里找同一部作品（排除当前规则）
+   * 返回每个源的一条命中，播放器据此做“换源播放”
+   */
+  'aggregate/same': async ({ name, contentType, excludeRuleId }) => {
+    const kw = String(name || '').trim();
+    if (!kw) return [];
+    const normalize = (v: string) =>
+      String(v || '')
+        .toLowerCase()
+        .replace(/[（(【[][^)）】]]*[)）】]]/g, '')
+        .replace(/(第[一二三四五六七八九十\d]+季|season\s*\d+|全\s*\d+\s*集|更新至\s*\d+\s*集?|完结|国语|粤语|中字|双语|4k|1080p|720p|hd|bd)/gi, '')
+        .replace(/[\s\-_:：·,，.。!！?？"'“”‘’]/g, '');
+    const key = normalize(kw);
+    const rules = rulesStore.value.filter(
+      (r) =>
+        r.enableSearch &&
+        r.searchUrl &&
+        r.id !== excludeRuleId &&
+        (contentType === undefined || r.contentType === contentType)
+    );
+    const withTimeout = <T,>(p: Promise<T>, ms: number) =>
+      Promise.race([p.catch(() => [] as any), new Promise<any>((resolve) => setTimeout(() => resolve([]), ms))]);
+
+    const out: any[] = [];
+    await Promise.all(
+      rules.map(async (r) => {
+        const list = await withTimeout(new RuleManager(r).search(kw, 1), 7000);
+        const hit = (list || []).find((e: any) => normalize(e.name) === key) || (list || [])[0];
+        if (!hit) return;
+        out.push({
+          ruleId: r.id,
+          rule: r.name,
+          contentType: r.contentType,
+          name: hit.name,
+          url: hit.url,
+          cover: hit.cover,
+          chapter: hit.chapter,
+          episode: episodeNumber(hit.chapter || '')
+        });
+      })
+    );
+    // 标题完全一致的排前面
+    out.sort((a, b) => Number(normalize(b.name) === key) - Number(normalize(a.name) === key));
+    return out;
+  },
 
   /** 磁力搜索：Mikan / Nyaa / ACG.RIP（只给磁力链接，不做离线下载） */
   'magnet/search': ({ keyword, sources }) => searchMagnet(String(keyword || ''), Array.isArray(sources) ? sources : undefined),

@@ -517,3 +517,19 @@ export const searchMagnet = (data: { keyword: string; sources?: string[] }) =>
 
 export const resolveMagnet = (data: { torrentUrl: string; title: string }) =>
   request<{ infohash: string; magnet: string }>('magnet/resolve', data, false);
+
+// ======================= 多源同片 =======================
+
+export interface SameSource {
+  ruleId: string;
+  rule: string;
+  contentType: number;
+  name: string;
+  url: string;
+  cover?: string;
+  chapter?: string;
+  episode?: number | null;
+}
+
+export const getSameSources = (data: { name: string; contentType?: number; excludeRuleId?: string }) =>
+  request<SameSource[]>('aggregate/same', data, false);

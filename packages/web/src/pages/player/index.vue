@@ -8,6 +8,7 @@
             <template #extra>
               <a-space wrap>
                 <a-button type="primary" @click="init(true)">重新解析</a-button>
+                <a-button type="primary" ghost @click="openSourcePicker">换个源播放</a-button>
                 <a-button v-if="playUrl && !iframeMode" @click="iframeMode = true">以网页方式打开</a-button>
                 <a-button v-if="playUrl" @click="openRaw">新窗口打开</a-button>
               </a-space>
@@ -101,6 +102,7 @@
             </template>
           </a-dropdown>
           <input ref="subFileRef" type="file" accept=".srt,.vtt,.ass,.ssa,text/plain" style="display: none" @change="onSubtitleFile" />
+          <a-button size="small" :loading="sameLoading" @click="openSourcePicker">换源</a-button>
           <a-dropdown>
             <a-button size="small" :type="srOn ? 'primary' : 'default'">
               超分{{ srOn ? ' ' + (srScale === 1.5 ? '1.5' : srScale) + 'x' : '' }}
@@ -129,6 +131,21 @@
         </a-space>
       </div>
     </section>
+
+    <!-- 换源：同一部作品的其他来源 -->
+    <a-drawer v-model:open="sourceOpen" title="换个源播放" placement="right" :width="420">
+      <p class="we-muted" style="font-size: 12px">
+        按片名在其他规则里找同一部作品；切过去会尽量停在相同的集数。
+      </p>
+      <a-empty v-if="!sameLoading && !sameSources.length" description="没有找到其他来源" />
+      <div v-for="s0 in sameSources" :key="s0.ruleId" class="source-item">
+        <div class="source-item__main">
+          <div class="source-item__name">{{ s0.rule }}</div>
+          <div class="source-item__title we-muted we-ellipsis" :title="s0.name">{{ s0.name }}</div>
+        </div>
+        <a-button size="small" type="primary" :loading="switching === s0.ruleId" @click="switchSource(s0)">切过去</a-button>
+      </div>
+    </a-drawer>
 
     <!-- 选集 -->
     <aside class="player__side">
@@ -171,6 +188,9 @@ import {
 } from '@ant-design/icons-vue';
 import type Hls from 'hls.js';
 import {
+  getChapter,
+  getSameSources,
+  type SameSource,
   fetchBiliSubtitle,
   getBiliSubtitles,
   getContent,
@@ -185,13 +205,17 @@ import { createAdFilterLoader } from '@/utils/hls-adloader';
 import ExternalPlayerMenu from '@/components/ExternalPlayerMenu.vue';
 import { loadSkipConfig, recordIntroSample, recordOutroSample, saveSkipConfig, suggestSkip } from '@/utils/skip-learn';
 import { SuperResolver, type SuperResScale } from '@/utils/superres';
+import { episodeNo } from '@/utils/episode';
 import { useChaptersStore } from '@/stores/chapters';
+import { useRulesStore } from '@/stores/rules';
 import { useSettingStore } from '@/stores/setting';
 import { useBus, EVENT_CHAPTERS_BOX } from '@/utils/bus';
 
 const route = useRoute();
 const router = useRouter();
 const chapters = useChaptersStore();
+const rules = useRulesStore();
+const rule = computed(() => rules.list.find((r) => r.id === ruleId));
 const setting = useSettingStore();
 
 const q = route.query as Record<string, string>;
@@ -203,6 +227,54 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 换源 ----------------
+const sourceOpen = ref(false);
+const sameSources = ref<SameSource[]>([]);
+const sameLoading = ref(false);
+const switching = ref('');
+
+async function openSourcePicker() {
+  sourceOpen.value = true;
+  if (sameSources.value.length) return;
+  sameLoading.value = true;
+  const res = await getSameSources({
+    name: String(current.value?.name ? name : name),
+    contentType: rule.value?.contentType,
+    excludeRuleId: ruleId
+  });
+  sameLoading.value = false;
+  sameSources.value = res.code === 0 ? res.data || [] : [];
+}
+
+/** 切到另一个源，尽量停在相同的集 */
+async function switchSource(src: SameSource) {
+  switching.value = src.ruleId;
+  try {
+    const list = await getChapter(src.ruleId, src.url, true);
+    const rows = list.code === 0 ? list.data || [] : [];
+    if (!rows.length) {
+      message.error('这个源没有可播放的剧集');
+      return;
+    }
+    const want = episodeNo(String(current.value?.name || ''));
+    const hit = (want != null && rows.find((r) => episodeNo(r.name) === want)) || rows[0];
+    sourceOpen.value = false;
+    disableSuperRes();
+    router.replace({
+      path: '/player',
+      query: {
+        ruleId: src.ruleId,
+        filePath: src.url,
+        chapterPath: hit.chapterPath,
+        name: src.name,
+        currentTime: '0'
+      }
+    });
+  } finally {
+    switching.value = '';
+  }
+}
+
 // ---------------- 超分 ----------------
 const srCanvasRef = ref<HTMLCanvasElement>();
 const srOn = ref(false);
@@ -1124,6 +1196,24 @@ onBeforeUnmount(() => {
   color: #fff;
   background: rgba(0, 0, 0, 0.6);
   pointer-events: none;
+}
+.source-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.25));
+}
+.source-item__main {
+  flex: 1;
+  min-width: 0;
+}
+.source-item__name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.source-item__title {
+  font-size: 12px;
 }
 .player__sr {
   position: absolute;
