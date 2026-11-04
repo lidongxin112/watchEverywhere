@@ -802,7 +802,12 @@ export const routes: Record<string, Handler> = {
   },
 
   /** 磁力搜索：Mikan / Nyaa / ACG.RIP（只给磁力链接，不做离线下载） */
-  'magnet/search': ({ keyword, sources }) => searchMagnet(String(keyword || ''), Array.isArray(sources) ? sources : undefined),
+  'magnet/search': ({ keyword, sources, category }) =>
+    searchMagnet(
+      String(keyword || ''),
+      Array.isArray(sources) && sources.length ? sources : undefined,
+      String(category || 'all') as any
+    ),
 
   // ======================= 磁力在线播放 =======================
   /** 打开磁力，返回文件列表 */

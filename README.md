@@ -417,6 +417,30 @@ node scripts/stop.mjs --hard   # 卡死时强制 SIGKILL
 - 需要能连到 peer（DHT + UDP tracker）。**HTTP 代理帮不上 P2P**，要走 TUN/全局模式；一个 peer 都连不上时会明确报「连接磁力超时（没有找到 peer）」
 
 
+
+### 磁力支持的分类与源
+
+磁力页顶部有「类型」选择，不同分类会落到不同站点：
+
+| 类型 | 主要来源 |
+| --- | --- |
+| 全部 | Torrents-CSV + Mikan + Nyaa + 动漫花园 |
+| 动漫 | Mikan、动漫花园（`sort_id=1`）、Nyaa（`c=1_0`）、Torrents-CSV |
+| 电影 | Torrents-CSV、TPB（`cat=201/207`） |
+| 电视剧 | Torrents-CSV、TPB（`cat=205/208`）、Nyaa 真人（`c=4_0`） |
+| 综艺 | 动漫花园（`sort_id=4`）、TPB（剧集分类） |
+| 音乐 | Torrents-CSV、TPB（`cat=101/104`）、Nyaa（`c=2_0`） |
+| 电子书 | Torrents-CSV、TPB（`cat=601/102/103`）、Nyaa（`c=3_0`） |
+| 漫画 | Torrents-CSV、TPB（`cat=602`）、动漫花园（`sort_id=2`） |
+
+工程上的几点：
+
+- **Torrents-CSV** 是公开索引快照（`/service/search?q=&size=`），响应 <1s，作为通用兜底
+- **TPB（apibay）** 分类最全但很慢（实测 10~40s），所以只放后台补；首屏不等它
+- **源健康度**：某个源失败后 5 分钟内直接跳过，不再白等超时——所以第一次搜索可能 8~12s，之后基本 200~700ms
+- 每个源单独限时，代理只在「代理能给的东西」上用（4 秒不通立刻退回直连）
+
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。

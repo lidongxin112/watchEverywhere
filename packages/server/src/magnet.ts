@@ -29,6 +29,8 @@ export interface MagnetItem {
 
 const cache = new MemoryCache();
 const TTL = 15 * 60_000;
+/** 源健康度：失败后 5 分钟内不再尝试 */
+const unhealthy = new Map<string, number>();
 
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -37,17 +39,36 @@ function rule(host: string) {
   return createRule({ host, userAgent: UA });
 }
 
+/**
+ * 取文本：优先走代理（被墙的源需要），代理失败再退回直连。
+ * 这样「代理挂了」不会把本来能直连的站点一起拖死。
+ */
+/** 代理最近一次失败的时间，60 秒内不再尝试（避免每个请求都先等代理超时） */
+let proxyBrokenUntil = 0;
+
 async function getText(url: string, host: string, referer?: string, proxyUrl?: string): Promise<string> {
-  const res = await fetch(
+  const build = (useProxy: boolean, timeout?: number) =>
     parseRequest(
       JSON.stringify({
         url,
+        ...(timeout ? { timeout } : {}),
         headers: referer ? { Referer: referer } : {},
-        ...(proxyUrl ? { proxy: axiosProxy(proxyUrl) } : {})
+        ...(useProxy && proxyUrl ? { proxy: axiosProxy(proxyUrl) } : {})
       }),
       rule(host)
-    )
-  );
+    );
+
+  // 代理只给 4 秒机会：通了用它（被墙的站点需要），不通立刻直连
+  if (proxyUrl && Date.now() > proxyBrokenUntil) {
+    try {
+      const res = await fetch(build(true, 4000));
+      const text = String(res.body || '');
+      if (text) return text;
+    } catch {
+      proxyBrokenUntil = Date.now() + 60_000;
+    }
+  }
+  const res = await fetch(build(false));
   return String(res.body || '');
 }
 
@@ -220,14 +241,15 @@ async function searchNyaaLike(
   keyword: string,
   bases: string[],
   sourceName: string,
-  proxyUrl?: string
+  proxyUrl?: string,
+  nyaaCat = '0_0'
 ): Promise<MagnetItem[]> {
   let html = '';
   let host = '';
   for (const base of bases) {
     try {
       html = await getText(
-        `${base}/?f=0&c=0_0&q=${encodeURIComponent(keyword)}&s=seeders&o=desc`,
+        `${base}/?f=0&c=${nyaaCat}&q=${encodeURIComponent(keyword)}&s=seeders&o=desc`,
         base,
         `${base}/`,
         proxyUrl
@@ -304,15 +326,111 @@ async function searchAcgRip(keyword: string, proxyUrl?: string): Promise<MagnetI
   }
 }
 
+// ---------------- Torrents-CSV（快速、无分类限制） ----------------
+
+async function searchCsv(keyword: string, proxyUrl?: string): Promise<MagnetItem[]> {
+  // 这个库是 TPB 等站点的公开索引快照，响应快（<1s），适合做通用兜底
+  const bases = ['https://torrents-csv.com', 'https://torrents-csv.ml'];
+  let json = '';
+  for (const base of bases) {
+    try {
+      json = await getText(
+        `${base}/service/search?q=${encodeURIComponent(keyword)}&size=60`,
+        base,
+        `${base}/`,
+        proxyUrl
+      );
+      if (json.includes('infohash')) break;
+    } catch {
+      /* 换镜像 */
+    }
+  }
+  if (!json) return [];
+  try {
+    const rows = JSON.parse(json).torrents || [];
+    return rows.map((r: any) => ({
+      title: String(r.name || ''),
+      magnet: magnetOf(String(r.infohash || '').toLowerCase(), String(r.name || '')),
+      infohash: String(r.infohash || '').toLowerCase(),
+      size: humanSize(Number(r.size_bytes || 0)),
+      sizeBytes: Number(r.size_bytes || 0),
+      seeders: Number(r.seeders || 0),
+      leechers: Number(r.leechers || 0),
+      published: r.created_unix ? new Date(Number(r.created_unix) * 1000).toISOString().slice(0, 16).replace('T', ' ') : '',
+      source: 'Torrents-CSV'
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ---------------- The Pirate Bay（apibay） ----------------
+
+/** TPB 分类：1xx 音频 / 2xx 视频 / 6xx 其它 */
+const TPB_CATS: Record<string, string[]> = {
+  movie: ['201', '207'],
+  tv: ['205', '208'],
+  variety: ['205'],
+  music: ['101', '104'],
+  book: ['601', '102', '103'],
+  comic: ['602'],
+  anime: ['205']
+};
+
+const TPB_LABEL: Record<string, string> = {
+  '101': '音乐', '102': '有声书', '103': '有声书', '104': '无损音乐',
+  '201': '电影', '202': '电影DVD', '205': '剧集', '207': '高清电影', '208': '高清剧集',
+  '601': '电子书', '602': '漫画'
+};
+
+async function searchApibay(keyword: string, category: string, proxyUrl?: string): Promise<MagnetItem[]> {
+  const cats = TPB_CATS[category] || ['201', '205'];
+  const out: MagnetItem[] = [];
+  await Promise.all(
+    cats.map(async (cat) => {
+      try {
+        const json = await getText(
+          `https://apibay.org/q.php?q=${encodeURIComponent(keyword)}&cat=${cat}`,
+          'https://apibay.org',
+          'https://thepiratebay.org/',
+          proxyUrl
+        );
+        const rows = JSON.parse(json);
+        if (!Array.isArray(rows)) return;
+        for (const r of rows) {
+          if (!r?.info_hash || r.name === 'No results returned') continue;
+          out.push({
+            title: String(r.name),
+            magnet: magnetOf(String(r.info_hash).toLowerCase(), String(r.name)),
+            infohash: String(r.info_hash).toLowerCase(),
+            size: humanSize(Number(r.size || 0)),
+            sizeBytes: Number(r.size || 0),
+            seeders: Number(r.seeders || 0),
+            leechers: Number(r.leechers || 0),
+            published: r.added ? new Date(Number(r.added) * 1000).toISOString().slice(0, 16).replace('T', ' ') : '',
+            source: 'TPB',
+            category: TPB_LABEL[String(r.category)] || String(r.category || ''),
+            detailUrl: `https://thepiratebay.org/description.php?id=${r.id}`
+          });
+        }
+      } catch {
+        /* 单个分类失败不影响 */
+      }
+    })
+  );
+  return out;
+}
+
 // ---------------- 动漫花园 ----------------
 
-async function searchDmhy(keyword: string, proxyUrl?: string): Promise<MagnetItem[]> {
+async function searchDmhy(keyword: string, proxyUrl?: string, sortId?: string): Promise<MagnetItem[]> {
   const bases = ['https://share.dmhy.org', 'https://dmhy.org'];
   let html = '';
   let host = '';
   for (const base of bases) {
     try {
-      html = await getText(`${base}/topics/list?keyword=${encodeURIComponent(keyword)}`, base, `${base}/`, proxyUrl);
+      const sort = sortId ? `&sort_id=${sortId}` : '';
+      html = await getText(`${base}/topics/list?keyword=${encodeURIComponent(keyword)}${sort}`, base, `${base}/`, proxyUrl);
       host = base;
       if (html.includes('magnet:')) break;
     } catch {
@@ -470,14 +588,40 @@ export interface MagnetSearchResult {
   pendingOther?: boolean;
 }
 
-export async function searchMagnet(keyword: string, sources?: string[]): Promise<MagnetSearchResult> {
+export type MagnetCategory = 'all' | 'anime' | 'movie' | 'tv' | 'variety' | 'music' | 'book' | 'comic';
+
+/** 每类内容默认查哪些源 */
+const CATEGORY_PLAN: Record<MagnetCategory, { mikan?: boolean; nyaa?: string; dmhy?: string; apibay?: boolean }> = {
+  all: { mikan: true, nyaa: '0_0', dmhy: '', apibay: false },
+  anime: { mikan: true, nyaa: '1_0', dmhy: '1' },
+  movie: { nyaa: '4_0', apibay: true },
+  tv: { nyaa: '4_0', apibay: true },
+  variety: { dmhy: '4', apibay: true },
+  music: { nyaa: '2_0', apibay: true },
+  book: { nyaa: '3_0', apibay: true },
+  comic: { dmhy: '2', apibay: true }
+};
+
+export async function searchMagnet(
+  keyword: string,
+  sources?: string[],
+  category: MagnetCategory = 'all'
+): Promise<MagnetSearchResult> {
   const kw = String(keyword || '').trim();
   if (!kw) return { items: [], sources: [], primaryOk: false };
-  const key = `magnet@${kw}@${(sources || []).join(',')}`;
+  const plan = CATEGORY_PLAN[category] || CATEGORY_PLAN.all;
+  const key = `magnet@${kw}@${(sources || []).join(',')}@${category}`;
   const hit = cache.get<MagnetSearchResult>(key);
   if (hit) return hit;
 
-  const want = (name: string) => !sources?.length || sources.includes(name);
+  // 选了分类就按分类的源计划来；没选分类（undefined）时尊重用户勾选
+  const want = (name: string) => {
+    if (sources?.length) return sources.includes(name);
+    if (name === 'mikan') return !!plan.mikan;
+    if (name === 'dmhy') return plan.dmhy !== undefined;
+    if (name === 'apibay') return !!plan.apibay;
+    return true;
+  };
   const withTimeout = (p: Promise<MagnetItem[]>, ms: number) =>
     Promise.race([
       p.catch(() => []),
@@ -499,10 +643,17 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
   // 主源同步返回（Mikan 一般 1~2 秒），其他源后台补齐，避免被墙的站点拖住整个搜索
   const status: SourceStatus[] = [];
   const timed = async (name: string, fn: () => Promise<MagnetItem[]>, ms: number): Promise<MagnetItem[]> => {
+    // 5 分钟内失败过的源直接跳过，避免每次搜索都白等超时
+    const until = unhealthy.get(name) || 0;
+    if (until > Date.now()) {
+      status.push({ name, count: 0, ok: false, ms: 0, error: '最近不可达，已跳过（5 分钟后重试）' });
+      return [];
+    }
     const t0 = Date.now();
-    let done = false;
     const rows = await withTimeout(fn(), ms);
-    done = rows.length > 0;
+    const done = rows.length > 0;
+    if (done) unhealthy.delete(name);
+    else unhealthy.set(name, Date.now() + 5 * 60_000);
     status.push({ name, count: rows.length, ok: done, ms: Date.now() - t0, error: done ? undefined : '无结果或超时' });
     return dedupe(rows);
   };
@@ -511,7 +662,7 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
   // 超时就把请求丢到后台继续跑，客户端几秒后再来取（结果会进缓存）
   let primary: MagnetItem[] = [];
   let pending = false;
-  if (want('mikan')) {
+  if (want('mikan') && plan.mikan) {
     const primaryMs = Number(process.env.WE_MAGNET_TIMEOUT) || 10000;
     primary = await timed('Mikan', () => searchMikan(kw), primaryMs);
     if (!primary.length) {
@@ -531,34 +682,46 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
   const NYAA_BASES = ['https://nyaa.si', 'https://nyaa.iss.ink', 'https://nyaa.moe'];
   const SUKEBEI_BASES = ['https://sukebei.nyaa.si', 'https://sukebei.nyaa.iss.ink'];
 
-  const rest: Promise<MagnetItem[]>[] = [];
-  // 这几个基本都需要代理；有代理就带上
-  if (want('nyaa')) rest.push(timed('Nyaa', () => searchNyaaLike(kw, NYAA_BASES, 'Nyaa', proxy), 12000));
-  if (want('sukebei')) rest.push(timed('Sukebei', () => searchNyaaLike(kw, SUKEBEI_BASES, 'Sukebei', proxy), 12000));
-  if (want('dmhy')) rest.push(timed('动漫花园', () => searchDmhy(kw, proxy), 12000));
-  if (want('acgrip')) rest.push(timed('ACG.RIP', () => searchAcgRip(kw, proxy), 10000));
-  // 主源没结果时（或压根没选 Mikan），就把其他源等回来再返回，别让用户看到空白
-  const needWait = !primary.length;
-  if (rest.length && needWait) {
-    const lists = await Promise.all(rest);
+  const fastRest: Promise<MagnetItem[]>[] = [];
+  const slowRest: Promise<MagnetItem[]>[] = [];
+  if (want('csv') || !sources?.length) fastRest.push(timed('Torrents-CSV', () => searchCsv(kw, proxy), 8000));
+  if (want('nyaa')) fastRest.push(timed('Nyaa', () => searchNyaaLike(kw, NYAA_BASES, 'Nyaa', proxy, plan.nyaa || '0_0'), 9000));
+  if (want('sukebei')) fastRest.push(timed('Sukebei', () => searchNyaaLike(kw, SUKEBEI_BASES, 'Sukebei', proxy), 9000));
+  if (want('dmhy')) fastRest.push(timed('动漫花园', () => searchDmhy(kw, proxy, plan.dmhy || undefined), 9000));
+  if (want('acgrip')) fastRest.push(timed('ACG.RIP', () => searchAcgRip(kw, proxy), 8000));
+  // TPB 很慢（实测 10~40s），放后台，别拖住首屏
+  if (want('apibay')) slowRest.push(timed('TPB', () => searchApibay(kw, category, proxy), 40000));
+
+  const pendingOther = slowRest.length > 0;
+  if (fastRest.length) {
+    const lists = await Promise.all(fastRest);
     const merged = dedupe([...primary, ...lists.flat()]);
-    const result: MagnetSearchResult = { items: merged, sources: status, primaryOk: primary.length > 0, pending };
+    const result: MagnetSearchResult = {
+      items: merged,
+      sources: status,
+      primaryOk: primary.length > 0,
+      pending,
+      pendingOther
+    };
     if (merged.length) cache.set(key, result, TTL);
+    if (slowRest.length) {
+      void Promise.all(slowRest)
+        .then((extra) => {
+          const all = dedupe([...merged, ...extra.flat()]);
+          cache.set(key, { items: all, sources: status, primaryOk: primary.length > 0, pendingOther: false }, TTL);
+        })
+        .catch(() => {});
+    }
     return result;
   }
 
-  let pendingOther = false;
-  if (rest.length) {
-    pendingOther = true;
-    void Promise.all(rest)
-      .then(async (lists) => {
-        const extra = lists.flat();
-        if (!extra.length) return;
-        const merged = dedupe([...primary, ...extra]);
-        if (merged.length)
-          cache.set(key, { items: merged, sources: status, primaryOk: primary.length > 0, pendingOther: false }, TTL);
-      })
-      .catch(() => {});
+  // 只有慢源时才同步等（例如只勾了 TPB）
+  if (slowRest.length) {
+    const extra = await Promise.all(slowRest);
+    const merged = dedupe([...primary, ...extra.flat()]);
+    const result: MagnetSearchResult = { items: merged, sources: status, primaryOk: primary.length > 0, pending };
+    if (merged.length) cache.set(key, result, TTL);
+    return result;
   }
 
   const out = dedupe(primary);

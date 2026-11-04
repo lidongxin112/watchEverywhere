@@ -528,7 +528,7 @@ export interface MagnetSearchResult {
   pendingOther?: boolean;
 }
 
-export const searchMagnet = (data: { keyword: string; sources?: string[] }) =>
+export const searchMagnet = (data: { keyword: string; sources?: string[]; category?: string }) =>
   request<MagnetSearchResult>('magnet/search', data, false);
 
 export const resolveMagnet = (data: { torrentUrl: string; title: string }) =>

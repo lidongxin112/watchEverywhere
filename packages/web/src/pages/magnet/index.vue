@@ -9,7 +9,10 @@
         :loading="loading"
         @search="search()"
       />
-      <a-checkbox-group v-model:value="sources" :options="sourceOptions" />
+      <a-space wrap>
+        <a-select v-model:value="category" :options="categoryOptions" style="width: 120px" size="small" @change="onCategoryChange" />
+        <a-checkbox-group v-model:value="sources" :options="sourceOptions" />
+      </a-space>
     </div>
 
     <div class="magnet__status we-muted">
@@ -154,25 +157,44 @@ function startPlay(f: TorrentFileItem) {
 }
 let retryTimer: number | null = null;
 const resolving = ref('');
-const sources = ref<string[]>(['mikan', 'nyaa', 'dmhy']);
+const category = ref('all');
+const categoryOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'anime', label: '动漫' },
+  { value: 'movie', label: '电影' },
+  { value: 'tv', label: '电视剧' },
+  { value: 'variety', label: '综艺' },
+  { value: 'music', label: '音乐' },
+  { value: 'book', label: '电子书' },
+  { value: 'comic', label: '漫画' }
+];
+const sources = ref<string[]>([]);
 const probes = ref<MagnetSourceProbe[]>([]);
 const proxyUrl = ref('');
 
+const allSourceKeys = [
+  { key: 'mikan', name: 'Mikan' },
+  { key: 'nyaa', name: 'Nyaa' },
+  { key: 'dmhy', name: '动漫花园' },
+  { key: 'sukebei', name: 'Sukebei' },
+  { key: 'acgrip', name: 'ACG.RIP' },
+  { key: 'apibay', name: 'TPB' },
+  { key: 'csv', name: 'Torrents-CSV' }
+];
+
 const sourceOptions = computed(() =>
-  (probes.value.length
-    ? probes.value
-    : [
-        { key: 'mikan', name: 'Mikan', direct: true },
-        { key: 'nyaa', name: 'Nyaa', direct: false },
-        { key: 'dmhy', name: '动漫花园', direct: false },
-        { key: 'sukebei', name: 'Sukebei', direct: false },
-        { key: 'acgrip', name: 'ACG.RIP', direct: false }
-      ]
-  ).map((s0: any) => ({
-    value: s0.key,
-    label: `${s0.name}${s0.direct || s0.viaProxy ? '' : '（不可达）'}`
-  }))
+  allSourceKeys.map((s0) => {
+    const probe = probes.value.find((p) => p.key === s0.key);
+    const ok = !probe || probe.direct || probe.viaProxy;
+    return { value: s0.key, label: ok ? s0.name : `${s0.name}（不可达）` };
+  })
 );
+
+/** 换类型时清掉手动勾选，交回服务端按类型选源 */
+function onCategoryChange() {
+  sources.value = [];
+  if (keyword.value.trim()) void search(false);
+}
 
 const columns = [
   { title: '标题', key: 'title', width: 520 },
@@ -192,7 +214,11 @@ async function search(reset = true, silent = false) {
   if (reset) router.replace({ query: { keyword: kw } });
   if (!silent) loading.value = true;
   searched.value = true;
-  const res = await searchMagnet({ keyword: kw, sources: sources.value });
+  const res = await searchMagnet({
+    keyword: kw,
+    category: category.value,
+    ...(sources.value.length ? { sources: sources.value } : {})
+  });
   loading.value = false;
   if (res.code !== 0) {
     message.error(res.msg || '搜索失败');
