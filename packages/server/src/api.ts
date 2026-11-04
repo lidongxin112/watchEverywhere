@@ -24,7 +24,8 @@ import { repairResources } from './repair';
 import { installFromMarket, listMarket } from './market';
 import { doubanComments } from './douban';
 import { episodeNumber } from './episode';
-import { resolveTorrent, searchMagnet } from './magnet';
+import { probeSources, resolveTorrent, searchMagnet } from './magnet';
+import { readProxyConfig, saveProxyConfig } from './proxy-config';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
 import { aiRoutes } from './ai';
@@ -798,6 +799,18 @@ export const routes: Record<string, Handler> = {
 
   /** 磁力搜索：Mikan / Nyaa / ACG.RIP（只给磁力链接，不做离线下载） */
   'magnet/search': ({ keyword, sources }) => searchMagnet(String(keyword || ''), Array.isArray(sources) ? sources : undefined),
+
+  /** 磁力源可用性 + 当前代理 */
+  'magnet/sources': () => probeSources(),
+
+  /** 读取 / 保存出口代理（被墙的源走它） */
+  'magnet/proxy-read': () => readProxyConfig(),
+  'magnet/proxy-save': ({ url }) => {
+    const clean = String(url || '').trim();
+    if (clean && !/^(https?|socks5?):\/\//i.test(clean)) throw new Error('代理地址要带协议，例如 http://127.0.0.1:7890');
+    saveProxyConfig(clean);
+    return { url: clean };
+  },
 
   /** 种子 → 磁力（按需解析，避免搜索时等十几秒） */
   'magnet/resolve': ({ torrentUrl, title }) => resolveTorrent(String(torrentUrl || ''), String(title || '')),

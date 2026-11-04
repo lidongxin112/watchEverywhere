@@ -126,6 +126,20 @@
     </div>
 
     <div class="setting__group">
+      <div class="setting__label">网络</div>
+      <div class="setting__row setting__row--col">
+        <span>出口代理（磁力源用）</span>
+        <a-space>
+          <a-input v-model:value="proxyUrl" placeholder="http://127.0.0.1:7890" style="width: 200px" size="small" />
+          <a-button size="small" :loading="proxySaving" @click="saveProxy">保存</a-button>
+        </a-space>
+      </div>
+      <div class="setting__row we-muted" style="font-size: 12px">
+        Nyaa / Sukebei / 动漫花园 在国内一般需要走代理；留空则自动探测本机常见端口（7890/1087/1080…）
+      </div>
+    </div>
+
+    <div class="setting__group">
       <div class="setting__label">数据</div>
       <a-space wrap>
         <a-button @click="onClearCache">清除解析缓存</a-button>
@@ -151,6 +165,8 @@ import {
   getAppInfo,
   getAppNotices,
   getAppLogs,
+  readMagnetProxy,
+  saveMagnetProxy,
   getPendingUpdate,
   type AppInfo,
   type AppNotice,
@@ -166,6 +182,21 @@ const checking = ref(false);
 const updateMsg = ref('');
 const downloading = ref(false);
 const exporting = ref(false);
+const proxyUrl = ref('');
+const proxySaving = ref(false);
+
+async function loadProxy() {
+  const res = await readMagnetProxy();
+  if (res.code === 0 && res.data?.url) proxyUrl.value = res.data.url;
+}
+
+async function saveProxy() {
+  proxySaving.value = true;
+  const res = await saveMagnetProxy(proxyUrl.value.trim());
+  proxySaving.value = false;
+  if (res.code !== 0) return message.error(res.msg || '保存失败');
+  message.success(proxyUrl.value.trim() ? '已保存代理' : '已清空代理（改为自动探测）');
+}
 const applying = ref(false);
 const pending = ref<PendingUpdate | null>(null);
 
@@ -228,6 +259,7 @@ onMounted(async () => {
   if (a.code === 0) info.value = a.data;
   if (n.code === 0 && Array.isArray(n.data)) notices.value = n.data;
   if (p.code === 0 && p.data) pending.value = p.data;
+  void loadProxy();
 });
 
 async function onClearCache() {
@@ -254,6 +286,11 @@ async function onClearCache() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.setting__row--col {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
 }
 .setting__notes {
   margin-top: 4px;

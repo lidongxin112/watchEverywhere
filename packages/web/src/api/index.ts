@@ -525,6 +525,7 @@ export interface MagnetSearchResult {
   sources: MagnetSourceStatus[];
   primaryOk: boolean;
   pending?: boolean;
+  pendingOther?: boolean;
 }
 
 export const searchMagnet = (data: { keyword: string; sources?: string[] }) =>
@@ -548,3 +549,22 @@ export interface SameSource {
 
 export const getSameSources = (data: { name: string; contentType?: number; excludeRuleId?: string }) =>
   request<SameSource[]>('aggregate/same', data, false);
+
+// ======================= 磁力源探测 / 代理 =======================
+
+export interface MagnetSourceProbe {
+  key: string;
+  name: string;
+  host: string;
+  needsProxy: boolean;
+  direct?: boolean;
+  viaProxy?: boolean;
+  ms?: number;
+  error?: string;
+}
+
+export const probeMagnetSources = () =>
+  request<{ proxy: string | null; sources: MagnetSourceProbe[] }>('magnet/sources', {}, false);
+
+export const readMagnetProxy = () => request<{ url: string } | null>('magnet/proxy-read', {}, false);
+export const saveMagnetProxy = (url: string) => request<{ url: string }>('magnet/proxy-save', { url }, false);

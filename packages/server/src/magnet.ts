@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createRule, fetch, parseRequest } from '@watch-everywhere/core';
 import { MemoryCache } from './store';
 import { pushLog } from './logs';
+import { axiosProxy, getProxy } from './proxy-config';
 
 /**
  * 磁力搜索（Mikan / Nyaa / ACG.RIP / 动漫花园）
@@ -36,17 +37,29 @@ function rule(host: string) {
   return createRule({ host, userAgent: UA });
 }
 
-async function getText(url: string, host: string, referer?: string): Promise<string> {
+async function getText(url: string, host: string, referer?: string, proxyUrl?: string): Promise<string> {
   const res = await fetch(
-    parseRequest(JSON.stringify({ url, headers: referer ? { Referer: referer } : {} }), rule(host))
+    parseRequest(
+      JSON.stringify({
+        url,
+        headers: referer ? { Referer: referer } : {},
+        ...(proxyUrl ? { proxy: axiosProxy(proxyUrl) } : {})
+      }),
+      rule(host)
+    )
   );
   return String(res.body || '');
 }
 
-async function getBuffer(url: string, host: string, referer?: string): Promise<Buffer> {
+async function getBuffer(url: string, host: string, referer?: string, proxyUrl?: string): Promise<Buffer> {
   const res = await fetch(
     parseRequest(
-      JSON.stringify({ url, responseType: 'arraybuffer', headers: referer ? { Referer: referer } : {} }),
+      JSON.stringify({
+        url,
+        responseType: 'arraybuffer',
+        headers: referer ? { Referer: referer } : {},
+        ...(proxyUrl ? { proxy: axiosProxy(proxyUrl) } : {})
+      }),
       rule(host)
     )
   );
@@ -102,6 +115,22 @@ export function infohashFromTorrent(buf: Buffer): string | null {
   if (!infoRange) return null;
   const infoBytes = buf.subarray(infoRange.start, infoRange.end);
   return createHash('sha1').update(infoBytes).digest('hex');
+}
+
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/** bitih 可能是 40 位 hex，也可能是 32 位 base32（动漫花园就是 base32） */
+export function normalizeInfohash(raw: string): string {
+  const v = String(raw || '').trim();
+  if (/^[0-9a-fA-F]{40}$/.test(v)) return v.toLowerCase();
+  if (/^[A-Z2-7]{32}$/i.test(v)) {
+    let bits = '';
+    for (const ch of v.toUpperCase()) bits += B32.indexOf(ch).toString(2).padStart(5, '0');
+    let hex = '';
+    for (let i = 0; i + 4 <= bits.length; i += 4) hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+    return hex.slice(0, 40);
+  }
+  return '';
 }
 
 export function magnetOf(infohash: string, title: string): string {
@@ -187,8 +216,12 @@ async function searchMikan(keyword: string): Promise<MagnetItem[]> {
 
 // ---------------- Nyaa ----------------
 
-async function searchNyaa(keyword: string): Promise<MagnetItem[]> {
-  const bases = ['https://nyaa.si', 'https://nyaa.iss.ink'];
+async function searchNyaaLike(
+  keyword: string,
+  bases: string[],
+  sourceName: string,
+  proxyUrl?: string
+): Promise<MagnetItem[]> {
   let html = '';
   let host = '';
   for (const base of bases) {
@@ -196,7 +229,8 @@ async function searchNyaa(keyword: string): Promise<MagnetItem[]> {
       html = await getText(
         `${base}/?f=0&c=0_0&q=${encodeURIComponent(keyword)}&s=seeders&o=desc`,
         base,
-        `${base}/`
+        `${base}/`,
+        proxyUrl
       );
       host = base;
       if (html.includes('magnet:')) break;
@@ -218,8 +252,11 @@ async function searchNyaa(keyword: string): Promise<MagnetItem[]> {
       decodeXml(/<a[^>]*class="[^"]*"[^>]*title="([^"]+)"/.exec(row)?.[1] || '') ||
       decodeXml(/<a href="\/view\/\d+"[^>]*>([\s\S]*?)<\/a>/.exec(row)?.[1] || '');
     if (!title) continue;
-    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => decodeXml(c[1].replace(/<[^>]+>/g, ' ')).trim());
-    const size = cells.find((c) => /^(TiB|GiB|MiB|KiB|B)/i.test(c.replace(/\s+/g, ''))) || '';
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) =>
+      decodeXml(c[1].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+    );
+    // nyaa 的列：0 分类 / 1 标题 / 2 链接 / 3 大小 / 4 时间 / 5 做种 / 6 下载中 / 7 完成数
+    const size = cells.find((c) => /^[\d.]+\s*(TiB|GiB|MiB|KiB|B)$/i.test(c)) || '';
     const seeders = Number(cells[cells.length - 3]) || 0;
     const leechers = Number(cells[cells.length - 2]) || 0;
     items.push({
@@ -230,7 +267,7 @@ async function searchNyaa(keyword: string): Promise<MagnetItem[]> {
       seeders,
       leechers,
       published: cells[4] || '',
-      source: 'Nyaa',
+      source: sourceName,
       detailUrl: host ? `${host}${/href="(\/view\/\d+)"/.exec(row)?.[1] || ''}` : ''
     });
   }
@@ -239,9 +276,14 @@ async function searchNyaa(keyword: string): Promise<MagnetItem[]> {
 
 // ---------------- ACG.RIP ----------------
 
-async function searchAcgRip(keyword: string): Promise<MagnetItem[]> {
+async function searchAcgRip(keyword: string, proxyUrl?: string): Promise<MagnetItem[]> {
   try {
-    const json = await getText(`https://acg.rip/.json?term=${encodeURIComponent(keyword)}`, 'https://acg.rip', 'https://acg.rip/');
+    const json = await getText(
+      `https://acg.rip/.json?term=${encodeURIComponent(keyword)}`,
+      'https://acg.rip',
+      'https://acg.rip/',
+      proxyUrl
+    );
     const rows = JSON.parse(json);
     const list: any[] = Array.isArray(rows) ? rows : rows?.items || [];
     return list.slice(0, 60).map((r) => {
@@ -260,6 +302,109 @@ async function searchAcgRip(keyword: string): Promise<MagnetItem[]> {
   } catch {
     return [];
   }
+}
+
+// ---------------- 动漫花园 ----------------
+
+async function searchDmhy(keyword: string, proxyUrl?: string): Promise<MagnetItem[]> {
+  const bases = ['https://share.dmhy.org', 'https://dmhy.org'];
+  let html = '';
+  let host = '';
+  for (const base of bases) {
+    try {
+      html = await getText(`${base}/topics/list?keyword=${encodeURIComponent(keyword)}`, base, `${base}/`, proxyUrl);
+      host = base;
+      if (html.includes('magnet:')) break;
+    } catch {
+      /* 换镜像 */
+    }
+  }
+  if (!html) return [];
+
+  const items: MagnetItem[] = [];
+  // 行结构：<tr ...> <td>日期</td> <td>分类</td> <td>标题+链接</td> <td>种子下载</td> <td>磁力</td> <td>大小</td> ...
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+  let m: RegExpExecArray | null;
+  while ((m = rowRe.exec(html))) {
+    const row = m[1];
+    const magnet = /href="(magnet:[^"]+)"/.exec(row)?.[1];
+    const torrent = /href="([^"]+\.torrent)"/.exec(row)?.[1];
+    if (!magnet && !torrent) continue;
+    const title =
+      decodeXml(
+        (/<a[^>]*href="\/topics\/view\/[^"]+"[^>]*>([\s\S]*?)<\/a>/.exec(row)?.[1] || '').replace(/<[^>]+>/g, '')
+      ) || decodeXml(/title="([^"]+)"/.exec(row)?.[1] || '');
+    if (!title) continue;
+    const infohash = normalizeInfohash(/urn:btih:([0-9a-zA-Z]+)/.exec(magnet || '')?.[1] || '');
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) =>
+      decodeXml(c[1].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+    );
+    const size = cells.find((c) => /^(\d+(\.\d+)?)\s*(GB|MB|KB|TB)$/i.test(c)) || '';
+    items.push({
+      title,
+      magnet: magnet || '',
+      infohash,
+      size,
+      published: (cells[0] || '').split(' ')[0] + ' ' + ((cells[0] || '').split(' ')[1] || ''),
+      source: '动漫花园',
+      detailUrl: host && /href="(\/topics\/view\/[^"]+)"/.test(row) ? `${host}${/href="(\/topics\/view\/[^"]+)"/.exec(row)![1]}` : '',
+      torrentUrl: torrent && torrent.startsWith('http') ? torrent : torrent ? `${host}${torrent}` : ''
+    });
+  }
+  return items;
+}
+
+// ---------------- 源可用性探测 ----------------
+
+export interface SourceProbe {
+  name: string;
+  key: string;
+  host: string;
+  needsProxy: boolean;
+  direct?: boolean;
+  viaProxy?: boolean;
+  ms?: number;
+  error?: string;
+}
+
+const PROBE_TARGETS: { key: string; name: string; url: string; host: string }[] = [
+  { key: 'mikan', name: 'Mikan', url: 'https://mikanime.tv/RSS/Search?searchstr=test', host: 'https://mikanime.tv' },
+  { key: 'nyaa', name: 'Nyaa', url: 'https://nyaa.si/', host: 'https://nyaa.si' },
+  { key: 'sukebei', name: 'Sukebei', url: 'https://sukebei.nyaa.si/', host: 'https://sukebei.nyaa.si' },
+  { key: 'dmhy', name: '动漫花园', url: 'https://share.dmhy.org/', host: 'https://share.dmhy.org' },
+  { key: 'acgrip', name: 'ACG.RIP', url: 'https://acg.rip/', host: 'https://acg.rip' }
+];
+
+/** 探测每个源：直连能不能通、走代理能不能通 */
+export async function probeSources(): Promise<{ proxy: string | null; sources: SourceProbe[] }> {
+  const proxy = (await getProxy())?.url || null;
+  const run = async (target: (typeof PROBE_TARGETS)[number], useProxy: boolean) => {
+    const t0 = Date.now();
+    try {
+      const text = await getText(target.url, target.host, `${target.host}/`, useProxy ? proxy || undefined : undefined);
+      return { ok: text.length > 0, ms: Date.now() - t0 };
+    } catch (e: any) {
+      return { ok: false, ms: Date.now() - t0, error: String(e?.message || e).slice(0, 80) };
+    }
+  };
+
+  const sources = await Promise.all(
+    PROBE_TARGETS.map(async (t) => {
+      const direct = await run(t, false);
+      const viaProxy = proxy && !direct.ok ? await run(t, true) : { ok: direct.ok, ms: direct.ms };
+      return {
+        key: t.key,
+        name: t.name,
+        host: t.host,
+        needsProxy: !direct.ok && !!viaProxy.ok,
+        direct: direct.ok,
+        viaProxy: viaProxy.ok,
+        ms: direct.ok ? direct.ms : viaProxy.ms,
+        error: direct.ok || viaProxy.ok ? undefined : direct.error || 'direct&proxy 均失败'
+      } as SourceProbe;
+    })
+  );
+  return { proxy, sources };
 }
 
 // ---------------- 汇总 ----------------
@@ -321,6 +466,8 @@ export interface MagnetSearchResult {
   primaryOk: boolean;
   /** 主源超时、后台还在补搜，客户端可以过几秒再查一次 */
   pending?: boolean;
+  /** 其他源还在后台跑，客户端可以过几秒再查一次拿到合并结果 */
+  pendingOther?: boolean;
 }
 
 export async function searchMagnet(keyword: string, sources?: string[]): Promise<MagnetSearchResult> {
@@ -380,22 +527,42 @@ export async function searchMagnet(keyword: string, sources?: string[]): Promise
     }
   }
 
+  const proxy = (await getProxy())?.url;
+  const NYAA_BASES = ['https://nyaa.si', 'https://nyaa.iss.ink', 'https://nyaa.moe'];
+  const SUKEBEI_BASES = ['https://sukebei.nyaa.si', 'https://sukebei.nyaa.iss.ink'];
+
   const rest: Promise<MagnetItem[]>[] = [];
-  if (want('nyaa')) rest.push(timed('Nyaa', () => searchNyaa(kw), 8000));
-  if (want('acgrip')) rest.push(timed('ACG.RIP', () => searchAcgRip(kw), 8000));
+  // 这几个基本都需要代理；有代理就带上
+  if (want('nyaa')) rest.push(timed('Nyaa', () => searchNyaaLike(kw, NYAA_BASES, 'Nyaa', proxy), 12000));
+  if (want('sukebei')) rest.push(timed('Sukebei', () => searchNyaaLike(kw, SUKEBEI_BASES, 'Sukebei', proxy), 12000));
+  if (want('dmhy')) rest.push(timed('动漫花园', () => searchDmhy(kw, proxy), 12000));
+  if (want('acgrip')) rest.push(timed('ACG.RIP', () => searchAcgRip(kw, proxy), 10000));
+  // 主源没结果时（或压根没选 Mikan），就把其他源等回来再返回，别让用户看到空白
+  const needWait = !primary.length;
+  if (rest.length && needWait) {
+    const lists = await Promise.all(rest);
+    const merged = dedupe([...primary, ...lists.flat()]);
+    const result: MagnetSearchResult = { items: merged, sources: status, primaryOk: primary.length > 0, pending };
+    if (merged.length) cache.set(key, result, TTL);
+    return result;
+  }
+
+  let pendingOther = false;
   if (rest.length) {
+    pendingOther = true;
     void Promise.all(rest)
       .then(async (lists) => {
         const extra = lists.flat();
         if (!extra.length) return;
         const merged = dedupe([...primary, ...extra]);
-        if (merged.length) cache.set(key, { items: merged, sources: status, primaryOk: primary.length > 0 }, TTL);
+        if (merged.length)
+          cache.set(key, { items: merged, sources: status, primaryOk: primary.length > 0, pendingOther: false }, TTL);
       })
       .catch(() => {});
   }
 
   const out = dedupe(primary);
-  const result: MagnetSearchResult = { items: out, sources: status, primaryOk: out.length > 0, pending };
+  const result: MagnetSearchResult = { items: out, sources: status, primaryOk: out.length > 0, pending, pendingOther };
   // 空结果不缓存：站点偶尔超时/限流，别让一次失败把 15 分钟都锁死
   if (out.length) cache.set(key, result, TTL);
   return result;

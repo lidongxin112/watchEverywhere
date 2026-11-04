@@ -368,6 +368,30 @@ Mikan 对不同关键词的速度差很多（「芙莉莲」3 秒、「鬼灭之
 简化字关键词在 Mikan 上偏慢，用日文原名（如 `鬼滅の刃`）大多 3 秒内返回。
 
 
+
+### 磁力源与代理
+
+| 源 | 域名 | 说明 |
+| --- | --- | --- |
+| Mikan | mikanime.tv / mikanani.kas.pub / mikanani.me | RSS 搜索（约 100 条/次），种子按需解析 infohash |
+| Nyaa | nyaa.si / nyaa.iss.ink / nyaa.moe | 表格解析，带做种/下载数，按做种排序 |
+| Sukebei | sukebei.nyaa.si / sukebei.nyaa.iss.ink | 同 Nyaa 解析器 |
+| 动漫花园 | share.dmhy.org / dmhy.org | 磁力是 base32 的 btih，服务端转成 hex 做去重 |
+| ACG.RIP | acg.rip | JSON 接口（该站对部分 UA 返回 406） |
+
+代理配置（给被墙的源用）：
+
+```bash
+WE_PROXY=http://127.0.0.1:7890 npm run dev:server
+```
+
+或「设置 → 网络 → 出口代理」保存（写到 `~/.watch-everywhere/proxy.json`）；两者都没有时自动探测本机常见端口（7890/1087/1080/8118…）。
+`POST /api/magnet/sources` 会返回每个源的**直连 / 走代理**可达性和耗时，磁力页的源列表会标注「不可达」。
+
+> 如果用的是 ClashX：未命中规则的流量由「⚓️其他流量」这一组决定，默认常常是 DIRECT ——
+> 需要把这一组切到节点选择，或给 `nyaa.si`、`sukebei.nyaa.si`、`dmhy.org`、`acg.rip` 各加一条指向代理节点的规则。
+
+
 ## 与 any-reader 的差异
 
 - 数据存储由 sqlite + typeorm 改为 JSON 文件，无需编译原生模块。

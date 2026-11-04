@@ -24,7 +24,11 @@
         </div>
         <div v-else-if="!list.length" style="margin-top: 4px">{{ emptyHint }}</div>
       </template>
-      <template v-else>只做搜索与磁力生成，不包含离线下载 / 网盘转存</template>
+      <template v-else>
+        只做搜索与磁力生成，不包含离线下载 / 网盘转存
+        <span v-if="proxyUrl" class="magnet__src">代理 {{ proxyUrl }}</span>
+        <span v-else class="magnet__src bad">未配置代理（Nyaa / 动漫花园 可能需要）</span>
+      </template>
     </div>
 
     <a-table
@@ -65,7 +69,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
-import { resolveMagnet, searchMagnet, type MagnetItem } from '@/api';
+import { probeMagnetSources, resolveMagnet, searchMagnet, type MagnetItem, type MagnetSourceProbe } from '@/api';
 
 const route = useRoute();
 const router = useRouter();
@@ -78,13 +82,25 @@ const sourceStatus = ref<{ name: string; count: number; ok: boolean; ms: number;
 const pending = ref(false);
 let retryTimer: number | null = null;
 const resolving = ref('');
-const sources = ref<string[]>(['mikan', 'nyaa', 'acgrip']);
+const sources = ref<string[]>(['mikan', 'nyaa', 'dmhy']);
+const probes = ref<MagnetSourceProbe[]>([]);
+const proxyUrl = ref('');
 
-const sourceOptions = [
-  { value: 'mikan', label: 'Mikan' },
-  { value: 'nyaa', label: 'Nyaa' },
-  { value: 'acgrip', label: 'ACG.RIP' }
-];
+const sourceOptions = computed(() =>
+  (probes.value.length
+    ? probes.value
+    : [
+        { key: 'mikan', name: 'Mikan', direct: true },
+        { key: 'nyaa', name: 'Nyaa', direct: false },
+        { key: 'dmhy', name: '动漫花园', direct: false },
+        { key: 'sukebei', name: 'Sukebei', direct: false },
+        { key: 'acgrip', name: 'ACG.RIP', direct: false }
+      ]
+  ).map((s0: any) => ({
+    value: s0.key,
+    label: `${s0.name}${s0.direct || s0.viaProxy ? '' : '（不可达）'}`
+  }))
+);
 
 const columns = [
   { title: '标题', key: 'title', width: 520 },
@@ -113,7 +129,7 @@ async function search(reset = true, silent = false) {
   }
   list.value = res.data?.items || [];
   sourceStatus.value = res.data?.sources || [];
-  pending.value = !!res.data?.pending;
+  pending.value = !!(res.data?.pending || res.data?.pendingOther);
   if (retryTimer) clearTimeout(retryTimer);
   if (pending.value) {
     // 后台补搜完成后自动再拉一次（最多两次）
@@ -134,6 +150,14 @@ async function makeMagnet(row: MagnetItem) {
   await copy(row.magnet);
 }
 
+async function loadProbes() {
+  const res = await probeMagnetSources();
+  if (res.code === 0 && res.data) {
+    probes.value = res.data.sources || [];
+    proxyUrl.value = res.data.proxy || '';
+  }
+}
+
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
@@ -144,6 +168,7 @@ async function copy(text: string) {
 }
 
 onMounted(() => {
+  void loadProbes();
   const kw = typeof route.query.keyword === 'string' ? route.query.keyword : '';
   if (kw) {
     keyword.value = kw;
