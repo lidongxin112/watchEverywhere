@@ -127,6 +127,9 @@ export const routes: Record<string, Handler> = {
   'subtitle/bili-fetch': ({ url }) => fetchBiliSubtitle(String(url || '')),
 
   // ======================= 版本 / 更新 =======================
+  /** 极轻量探针，用于判断端口上是不是我们自己 */
+  'app/ping': () => ({ pong: true, version: APP_VERSION, at: Date.now() }),
+
   'app/info': () => ({
     version: APP_VERSION,
     platform: detectPlatform(),

@@ -141,19 +141,41 @@ export function createServer() {
  *  - 否则打印一句人话再退出，避免一屏 stack
  */
 async function handlePortInUse(port: number): Promise<'reuse' | 'foreign'> {
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/app/info`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: '{}',
-      signal: AbortSignal.timeout(2000)
-    });
-    const json: any = await res.json().catch(() => null);
-    if (json && json.code === 0 && json.data && json.data.version) return 'reuse';
-  } catch {
-    /* 不是我们的服务 */
+  // 先打自己的轻量探针（响应很快，不会被业务卡住）
+  for (const path of ['/api/app/ping', '/api/app/info']) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(2500)
+      });
+      const json: any = await res.json().catch(() => null);
+      if (json && json.code === 0 && (json.data?.pong || json.data?.version)) return 'reuse';
+    } catch {
+      /* 换下一个探针 */
+    }
   }
   return 'foreign';
+}
+
+/** 谁占着这个端口？返回 PID 和命令行片段，方便用户自己处理 */
+async function portOwner(port: number): Promise<{ pid: string; cmd: string } | null> {
+  try {
+    const { execFileSync } = await import('node:child_process');
+    const pids = execFileSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    if (!pids.length) return null;
+    const pid = pids[0];
+    const cmd = execFileSync('ps', ['-o', 'command=', '-p', pid], { encoding: 'utf8' }).trim();
+    return { pid, cmd };
+  } catch {
+    return null;
+  }
+}
+
+/** 占用者是不是 watchEverywhere（可能只是卡住了） */
+function looksLikeOurs(cmd: string) {
+  return /watchEverywhere|src\/run\.ts|packages\/server\/src|dist\/watchEverywhere/i.test(cmd);
 }
 
 export function start(port = Number(process.env.PORT) || 8898) {
@@ -182,8 +204,17 @@ export function start(port = Number(process.env.PORT) || 8898) {
       console.log(`\n  ⚠️  端口 ${port} 已被另一个 watchEverywhere 实例占用，直接沿用那个实例。`);
       console.log(`     要重启请先关掉它：lsof -ti:${port} | xargs kill\n`);
     } else {
-      console.error(`\n  ✗ 端口 ${port} 被其他程序占用（不是 watchEverywhere）。`);
-      console.error(`     换个端口再启动：PORT=8899 npm run dev:server\n`);
+      const owner = await portOwner(port);
+      if (owner && looksLikeOurs(owner.cmd)) {
+        console.error(`\n  ⚠️  端口 ${port} 被「之前启动的 watchEverywhere」占着，但它没响应（可能卡住了）。`);
+        console.error(`     结束它再启动：kill ${owner.pid}   （强制：kill -9 ${owner.pid}）`);
+        console.error(`     或者让新实例换端口：PORT=8899 npm run dev:server\n`);
+      } else {
+        console.error(`\n  ✗ 端口 ${port} 被其他程序占用${owner ? `（PID ${owner.pid}：${owner.cmd.slice(0, 80)}）` : ''}。`);
+        console.error(`     换个端口再启动：PORT=8899 npm run dev:server`);
+        if (owner) console.error(`     或者结束占用进程：kill ${owner.pid}`);
+        console.error('');
+      }
       process.exit(1);
     }
     // 让进程活着（dev 下 concurrently -k 不会因为本进程退出而杀掉 web）
