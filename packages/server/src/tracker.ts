@@ -260,3 +260,46 @@ export function healthTier(seeders?: number, _leechers?: number): { level: 'good
   if (seeders >= 1) return { level: 'bad', label: '差' };
   return { level: 'dead', label: '无种子' };
 }
+
+export interface BatchItem {
+  infohash: string;
+  magnet?: string;
+}
+
+/**
+ * 批量测活：并发跑，结果按 infohash 返回；单条失败不影响其它
+ * concurrency 默认 4（tracker 对并发不友好，太高会被限流）
+ */
+export async function checkHealthBatch(
+  items: BatchItem[],
+  concurrency = 4
+): Promise<Record<string, HealthResult>> {
+  const list = (items || [])
+    .map((x) => ({ infohash: String(x.infohash || '').toLowerCase(), magnet: x.magnet }))
+    .filter((x) => /^[0-9a-f]{40}$/.test(x.infohash));
+  const out: Record<string, HealthResult> = {};
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < list.length) {
+      const item = list[cursor++];
+      try {
+        out[item.infohash] = await checkHealth(item.infohash, item.magnet);
+      } catch (e: any) {
+        out[item.infohash] = {
+          infohash: item.infohash,
+          ok: false,
+          seeders: 0,
+          leechers: 0,
+          completed: 0,
+          trackers: [],
+          checkedAt: Date.now(),
+          message: String(e?.message || e).slice(0, 80)
+        };
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, list.length)) }, worker));
+  return out;
+}

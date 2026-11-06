@@ -454,7 +454,9 @@ node scripts/stop.mjs --hard   # 卡死时强制 SIGKILL
 | 无种子（红） | 0 |
 | 未知（灰） | 来源没给 seeders |
 
-每行还有「**测活**」按钮：`torrent/health` 会向种子里的 tracker（外加 5 个公共 tracker）发 **scrape** 请求，拿真实的做种/下载/完成数：
+顶部还有「**批量测活**」按钮：把当前结果里的种子分批（每批 5 条、并发 4）全测一遍，按钮上显示 `5/25` 进度，结果直接回填到健康列。
+
+每行也有「**测活**」按钮：`torrent/health` 会向种子里的 tracker（外加 5 个公共 tracker）发 **scrape** 请求，拿真实的做种/下载/完成数：
 
 - HTTP(S) tracker：`GET <tracker>/scrape?info_hash=<raw bytes>` → bencode 解析
 - UDP tracker：`dgram` 实现 connect(0) → scrape(2) 两段协议，解析 `seeders/incomplete/completed`

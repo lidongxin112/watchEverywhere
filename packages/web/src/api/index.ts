@@ -617,3 +617,7 @@ export interface TorrentHealth {
 
 export const checkTorrentHealth = (data: { infohash: string; magnet?: string }) =>
   request<TorrentHealth>('torrent/health', data, false);
+
+/** 批量测活：一次传当前页所有种子 */
+export const checkTorrentHealthBatch = (items: { infohash: string; magnet?: string }[], concurrency = 4) =>
+  request<Record<string, TorrentHealth>>('torrent/health-batch', { items, concurrency }, false);

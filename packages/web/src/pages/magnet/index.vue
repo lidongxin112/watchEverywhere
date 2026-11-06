@@ -11,6 +11,9 @@
       />
       <a-space wrap>
         <a-select v-model:value="category" :options="categoryOptions" style="width: 120px" size="small" @change="onCategoryChange" />
+        <a-button size="small" :loading="batchChecking" :disabled="!list.length" @click="checkAllHealth">
+          批量测活{{ batchProgress ? ` ${batchProgress.done}/${batchProgress.total}` : '' }}
+        </a-button>
         <a-checkbox-group v-model:value="sources" :options="sourceOptions" />
       </a-space>
     </div>
@@ -114,6 +117,7 @@ import { message } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   checkTorrentHealth,
+  checkTorrentHealthBatch,
   openTorrent,
   probeMagnetSources,
   resolveMagnet,
@@ -233,6 +237,38 @@ function tierOf(item: MagnetItem) {
 
 const tierColor: Record<string, string> = { good: 'green', ok: 'blue', bad: 'orange', dead: 'red', unknown: 'default' };
 const healthMap = ref<Record<string, TorrentHealth>>({});
+
+const batchChecking = ref(false);
+const batchProgress = ref<{ done: number; total: number } | null>(null);
+
+/** 批量测活：当前页（或全部结果，最多 60 条）一次测完 */
+async function checkAllHealth() {
+  const targets = list.value.filter((x) => x.infohash).slice(0, 60);
+  if (!targets.length) return message.warning('没有可测活的种子');
+  batchChecking.value = true;
+  batchProgress.value = { done: 0, total: targets.length };
+  const chunk = 5;
+  try {
+    for (let i = 0; i < targets.length; i += chunk) {
+      const part = targets.slice(i, i + chunk);
+      const res = await checkTorrentHealthBatch(
+        part.map((x) => ({ infohash: x.infohash, magnet: x.magnet })),
+        4
+      );
+      if (res.code === 0 && res.data) {
+        healthMap.value = { ...healthMap.value, ...res.data };
+      }
+      batchProgress.value = { done: Math.min(i + chunk, targets.length), total: targets.length };
+    }
+    const rows = Object.values(healthMap.value);
+    const alive = rows.filter((r) => r.ok && r.seeders > 0).length;
+    if (alive) message.success(`测活完成：${alive}/${targets.length} 有做种`);
+    else message.warning('测活完成：所有 tracker 都不可达（网络可能拦了 P2P）');
+  } finally {
+    batchChecking.value = false;
+    batchProgress.value = null;
+  }
+}
 
 /** 深度测活：问 tracker 要真实做种数 */
 async function checkHealthOf(item: MagnetItem) {

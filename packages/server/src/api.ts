@@ -26,7 +26,7 @@ import { doubanComments } from './douban';
 import { episodeNumber } from './episode';
 import { probeSources, resolveTorrent, searchMagnet } from './magnet';
 import { closeTorrent, openTorrent, torrentStatus } from './torrent';
-import { checkHealth, healthTier } from './tracker';
+import { checkHealth, checkHealthBatch, healthTier } from './tracker';
 import { readProxyConfig, saveProxyConfig } from './proxy-config';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
@@ -832,6 +832,22 @@ export const routes: Record<string, Handler> = {
       // tracker 全不可达时不能说“没种子”，只能说“未知”
       tier: res.ok ? healthTier(res.seeders) : { level: 'unknown', label: '未知（tracker 不可达）' }
     };
+  },
+
+  /** 批量测活：一次检查当前页所有种子 */
+  'torrent/health-batch': async ({ items, concurrency }) => {
+    const map = await checkHealthBatch(
+      Array.isArray(items) ? items : [],
+      Math.min(8, Math.max(1, Number(concurrency) || 4))
+    );
+    const result: Record<string, any> = {};
+    for (const [hash, row] of Object.entries(map)) {
+      result[hash] = {
+        ...row,
+        tier: row.ok ? healthTier(row.seeders) : { level: 'unknown', label: '未知（tracker 不可达）' }
+      };
+    }
+    return result;
   },
 
   /** 批量按来源给的 seeders 分档（不发请求，纯计算） */
