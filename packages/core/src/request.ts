@@ -12,15 +12,18 @@ import { EXTRA_CA_PEMS } from './ca';
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+// 部分站点（如 mikan）用的根证书不在 Node 默认列表里，统一用这个 agent 补上
+export const httpsAgent = new https.Agent({
+  keepAlive: true,
+  ca: [...tls.rootCertificates, ...EXTRA_CA_PEMS]
+});
+
 // 站点偶尔很慢（海外小站 / 首次握手），默认给 20s
 const http = axios.create({
   timeout: 20000,
   maxRedirects: 5,
   // Node 自带 CA 列表缺了几个根，补上后再校验证书，避免整站请求失败
-  httpsAgent: new https.Agent({
-    keepAlive: true,
-    ca: [...tls.rootCertificates, ...EXTRA_CA_PEMS]
-  }),
+  httpsAgent,
   httpAgent: new http2.Agent({ keepAlive: true })
 });
 

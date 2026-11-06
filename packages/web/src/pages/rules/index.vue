@@ -18,6 +18,9 @@
         </template>
       </a-dropdown>
       <a-button :loading="loading" @click="refresh"><ReloadOutlined /></a-button>
+      <a-button :loading="checkingAll" @click="checkAllHealth">
+        体检{{ checkProgress ? ` ${checkProgress.done}/${checkProgress.total}` : '' }}
+      </a-button>
       <a-input-search v-model:value="filterText" placeholder="搜索名称 / 域名" allow-clear style="width: 200px" />
       <a-checkbox-group v-model:value="types" :options="CONTENT_TYPES" />
       <div style="flex: 1"></div>
@@ -65,6 +68,13 @@
         <div style="padding: 30px 0">还没有规则，可以把规则 JSON 文件拖拽到这里导入</div>
       </template>
       <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'health'">
+          <a-tooltip :title="healthTip(record.id)">
+            <a-tag :color="healthColor(record.id)" style="cursor: pointer" @click="openHealth(record)">
+              {{ healthLabel(record.id) }}
+            </a-tag>
+          </a-tooltip>
+        </template>
         <template v-if="column.key === 'name'">
           <a @click="editRule(record.id)">{{ record.name || '(未命名)' }}</a>
           <a-tag v-if="record.group" style="margin-left: 6px">{{ record.group }}</a-tag>
@@ -117,6 +127,48 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 规则健康 -->
+    <a-drawer v-model:open="healthOpen" :title="`规则健康 · ${healthRow?.name || ''}`" placement="right" :width="480">
+      <template v-if="healthRow">
+        <a-descriptions :column="2" size="small" bordered>
+          <a-descriptions-item label="总体">{{ healthLabel(healthRow.ruleId) }}</a-descriptions-item>
+          <a-descriptions-item label="成功率">
+            {{ healthRow.rate === null ? '暂无数据' : (healthRow.rate * 100).toFixed(0) + '%' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="搜索">{{ healthRow.searchOk }} 成功 / {{ healthRow.searchFail }} 失败</a-descriptions-item>
+          <a-descriptions-item label="目录">{{ healthRow.chapterOk }} 成功 / {{ healthRow.chapterFail }} 失败</a-descriptions-item>
+          <a-descriptions-item label="正文">{{ healthRow.contentOk }} 成功 / {{ healthRow.contentFail }} 失败</a-descriptions-item>
+          <a-descriptions-item label="最近耗时">{{ healthRow.lastMs ? healthRow.lastMs + 'ms' : '-' }}</a-descriptions-item>
+          <a-descriptions-item label="最近成功" :span="2">
+            {{ healthRow.lastOkAt ? dayjs(healthRow.lastOkAt).format('MM-DD HH:mm:ss') : '-' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="最近错误" :span="2">
+            <span v-if="healthRow.lastError" style="color: #ff7875">{{ healthRow.lastError }}</span>
+            <span v-else class="we-muted">无</span>
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <a-divider>重测</a-divider>
+        <a-space wrap>
+          <a-input v-model:value="testKeyword" placeholder="测试关键词（留空用规则名）" size="small" style="width: 220px" />
+          <a-button size="small" type="primary" :loading="testing" @click="runTest">跑一遍</a-button>
+          <a-popconfirm title="清空这条规则的统计？" @confirm="resetHealth">
+            <a-button size="small">清空统计</a-button>
+          </a-popconfirm>
+        </a-space>
+        <div v-if="testResult" class="health-steps">
+          <div v-for="(st, i) in testResult.steps" :key="i" :class="['health-step', { bad: st.ok === false }]">
+            <b>{{ st.step }}</b>
+            <span v-if="st.ok !== undefined">{{ st.ok ? '✓' : '✗' }}</span>
+            <span v-if="st.count !== undefined"> · {{ st.count }} 条</span>
+            <span v-if="st.ms"> · {{ st.ms }}ms</span>
+            <span v-if="st.error" class="health-step__err"> · {{ st.error }}</span>
+          </div>
+          <div class="we-muted" style="font-size: 12px; margin-top: 6px">总耗时 {{ testResult.totalMs }}ms</div>
+        </div>
+      </template>
+    </a-drawer>
 
     <!-- 规则市场 -->
     <a-drawer v-model:open="marketOpen" title="规则市场" placement="right" :width="560">
@@ -215,6 +267,9 @@ import {
   delRules,
   deleteSubscription,
   getMarket,
+  getRuleHealth,
+  resetRuleHealth,
+  testRule,
   getRuleBackups,
   installMarketRule,
   getSubscriptions,
@@ -224,6 +279,8 @@ import {
   restoreRuleBackup,
   saveSubscription as apiSaveSubscription,
   type MarketItem,
+  type RuleHealthRow,
+  type RuleTestResult,
   type RuleSubscription
 } from '@/api';
 import { useRulesStore } from '@/stores/rules';
@@ -248,6 +305,100 @@ const subChecking = ref(false);
 const subCheckingId = ref('');
 const subscriptions = ref<RuleSubscription[]>([]);
 const subForm = ref({ url: '', name: '', autoUpdate: true });
+
+// ---------------- 规则健康 ----------------
+const healthMap = ref<Record<string, RuleHealthRow>>({});
+const healthOpen = ref(false);
+const healthRow = ref<RuleHealthRow | null>(null);
+const testing = ref(false);
+const testKeyword = ref('');
+const testResult = ref<RuleTestResult | null>(null);
+const checkingAll = ref(false);
+const checkProgress = ref<{ done: number; total: number } | null>(null);
+
+async function loadHealth() {
+  const res = await getRuleHealth();
+  if (res.code !== 0) return;
+  const map: Record<string, RuleHealthRow> = {};
+  for (const row of res.data || []) map[row.ruleId] = row;
+  healthMap.value = map;
+}
+
+function rateOf(id: string) {
+  const r = healthMap.value[id];
+  return r?.rate === null || r?.rate === undefined ? -1 : r.rate;
+}
+function healthLabel(id: string) {
+  const r = healthMap.value[id];
+  if (!r || r.rate === null) return '未知';
+  return `${Math.round((r.rate ?? 0) * 100)}%`;
+}
+function healthColor(id: string) {
+  const r = healthMap.value[id];
+  if (!r || r.rate === null) return 'default';
+  if (r.level === 'good') return 'green';
+  if (r.level === 'ok') return 'blue';
+  return 'red';
+}
+function healthTip(id: string) {
+  const r = healthMap.value[id];
+  if (!r) return '还没有数据（用一次就会统计）';
+  if (r.rate === null) return '还没有数据';
+  const parts = [
+    `搜索 ${r.searchOk}/${r.searchOk + r.searchFail}`,
+    `目录 ${r.chapterOk}/${r.chapterOk + r.chapterFail}`,
+    `正文 ${r.contentOk}/${r.contentOk + r.contentFail}`
+  ];
+  if (r.lastError) parts.push(`最近错误：${r.lastError.slice(0, 40)}`);
+  return parts.join(' · ');
+}
+
+function openHealth(rule: Rule) {
+  healthRow.value = healthMap.value[rule.id] || null;
+  testResult.value = null;
+  testKeyword.value = '';
+  healthOpen.value = true;
+}
+
+async function runTest() {
+  if (!healthRow.value) return;
+  testing.value = true;
+  const res = await testRule(healthRow.value.ruleId, testKeyword.value.trim() || undefined);
+  testing.value = false;
+  if (res.code !== 0 || !res.data) return message.error(res.msg || '测试失败');
+  testResult.value = res.data;
+  await loadHealth();
+  healthRow.value = healthMap.value[healthRow.value.ruleId] || healthRow.value;
+}
+
+async function resetHealth() {
+  if (!healthRow.value) return;
+  await resetRuleHealth(healthRow.value.ruleId);
+  await loadHealth();
+  healthRow.value = healthMap.value[healthRow.value.ruleId] || null;
+  message.success('已清空统计');
+}
+
+/** 一键体检：并发 2，逐条跑 diagnostics/test-rule */
+async function checkAllHealth() {
+  const targets = rules.list.slice(0, 30);
+  if (!targets.length) return;
+  checkingAll.value = true;
+  checkProgress.value = { done: 0, total: targets.length };
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < targets.length) {
+      const rule = targets[cursor++];
+      await testRule(rule.id).catch(() => null);
+      checkProgress.value = { done: Math.min(cursor, targets.length), total: targets.length };
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  checkingAll.value = false;
+  checkProgress.value = null;
+  await loadHealth();
+  message.success('体检完成');
+}
 
 // ---------------- 规则市场 ----------------
 const marketOpen = ref(false);
@@ -360,6 +511,7 @@ const columns = [
   { title: '名称', key: 'name', dataIndex: 'name', width: 200, fixed: 'left', ellipsis: true, sorter: (a: Rule, b: Rule) => a.name.localeCompare(b.name) },
   { title: '类型', key: 'contentType', width: 70, align: 'center' },
   { title: '域名', key: 'host', dataIndex: 'host', ellipsis: true },
+  { title: '健康', key: 'health', width: 96, align: 'center', sorter: (a: Rule, b: Rule) => rateOf(a.id) - rateOf(b.id) },
   {
     title: '搜索',
     key: 'enableSearch',
@@ -545,7 +697,10 @@ async function copySelected() {
   }
 }
 
-onMounted(refresh);
+onMounted(async () => {
+  await refresh();
+  void loadHealth();
+});
 </script>
 
 <style scoped>
@@ -553,6 +708,21 @@ onMounted(refresh);
   color: #ff4d4f;
 }
 
+.health-steps {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.health-step {
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.2));
+}
+.health-step.bad {
+  color: #ff7875;
+}
+.health-step__err {
+  font-size: 12px;
+  opacity: 0.85;
+}
 .market-item {
   display: flex;
   align-items: center;

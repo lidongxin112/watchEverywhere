@@ -46,7 +46,7 @@ function rule(host: string) {
 /** 代理最近一次失败的时间，60 秒内不再尝试（避免每个请求都先等代理超时） */
 let proxyBrokenUntil = 0;
 
-async function getText(url: string, host: string, referer?: string, proxyUrl?: string): Promise<string> {
+async function getText(url: string, host: string, referer?: string, proxyUrl?: string, directTimeout = 20000): Promise<string> {
   const build = (useProxy: boolean, timeout?: number) =>
     parseRequest(
       JSON.stringify({
@@ -68,7 +68,7 @@ async function getText(url: string, host: string, referer?: string, proxyUrl?: s
       proxyBrokenUntil = Date.now() + 60_000;
     }
   }
-  const res = await fetch(build(false));
+  const res = await fetch(build(false, directTimeout));
   return String(res.body || '');
 }
 
@@ -494,13 +494,26 @@ const PROBE_TARGETS: { key: string; name: string; url: string; host: string }[] 
 ];
 
 /** 探测每个源：直连能不能通、走代理能不能通 */
-export async function probeSources(): Promise<{ proxy: string | null; sources: SourceProbe[] }> {
+let probeCache: { at: number; value: { proxy: string | null; sources: SourceProbe[] } } | null = null;
+
+export async function probeSources(force = false): Promise<{ proxy: string | null; sources: SourceProbe[] }> {
+  if (!force && probeCache && Date.now() - probeCache.at < 60_000) return probeCache.value;
   const proxy = (await getProxy())?.url || null;
+  // 探测用 axios 直连（不走 core 的重试逻辑），3 秒一档
   const run = async (target: (typeof PROBE_TARGETS)[number], useProxy: boolean) => {
     const t0 = Date.now();
     try {
-      const text = await getText(target.url, target.host, `${target.host}/`, useProxy ? proxy || undefined : undefined);
-      return { ok: text.length > 0, ms: Date.now() - t0 };
+      const axiosMod = (await import('axios')).default;
+      const { httpsAgent } = await import('@watch-everywhere/core');
+      const res = await axiosMod.get(target.url, {
+        httpsAgent,
+        timeout: 3000,
+        validateStatus: () => true,
+        maxRedirects: 3,
+        headers: { 'User-Agent': 'watchEverywhere/1.0' },
+        ...(useProxy && proxy ? { proxy: axiosProxy(proxy) } : {})
+      });
+      return { ok: res.status < 500, ms: Date.now() - t0 };
     } catch (e: any) {
       return { ok: false, ms: Date.now() - t0, error: String(e?.message || e).slice(0, 80) };
     }
@@ -522,7 +535,9 @@ export async function probeSources(): Promise<{ proxy: string | null; sources: S
       } as SourceProbe;
     })
   );
-  return { proxy, sources };
+  const value = { proxy, sources };
+  probeCache = { at: Date.now(), value };
+  return value;
 }
 
 // ---------------- 汇总 ----------------

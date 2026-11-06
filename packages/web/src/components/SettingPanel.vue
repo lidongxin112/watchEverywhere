@@ -132,12 +132,59 @@
         <a-space>
           <a-input v-model:value="proxyUrl" placeholder="http://127.0.0.1:7890" style="width: 200px" size="small" />
           <a-button size="small" :loading="proxySaving" @click="saveProxy">保存</a-button>
+          <a-button size="small" :loading="diagLoading" @click="runDiag">网络诊断</a-button>
         </a-space>
       </div>
       <div class="setting__row we-muted" style="font-size: 12px">
         Nyaa / Sukebei / 动漫花园 在国内一般需要走代理；留空则自动探测本机常见端口（7890/1087/1080…）
       </div>
     </div>
+
+    <a-drawer v-model:open="diagOpen" title="网络诊断" placement="right" :width="520">
+      <a-spin v-if="diagLoading && !diag" />
+      <template v-else-if="diag">
+        <a-alert
+          v-if="diag.tunRecommended"
+          type="warning"
+          show-icon
+          message="P2P 出站被拦"
+          description="磁力在线播放 / 测活需要 TUN 或全局代理模式，普通 HTTP 代理对 UDP 无效"
+          style="margin-bottom: 12px"
+        />
+        <a-alert v-else type="success" show-icon message="P2P 出站正常" style="margin-bottom: 12px" />
+
+        <div class="diag-row">
+          <span>当前代理</span>
+          <b>{{ diag.proxy || '未配置（自动探测也没找到）' }}</b>
+        </div>
+
+        <a-divider orientation="left" style="font-size: 12px">磁力源</a-divider>
+        <div v-for="m in diag.magnet" :key="m.key" class="diag-row">
+          <span>{{ m.name }}</span>
+          <span>
+            <a-tag :color="m.direct ? 'green' : m.viaProxy ? 'blue' : 'red'">
+              {{ m.direct ? '直连' : m.viaProxy ? '走代理' : '不可达' }}
+            </a-tag>
+            <span class="we-muted" style="font-size: 12px">{{ m.ms }}ms</span>
+          </span>
+        </div>
+
+        <a-divider orientation="left" style="font-size: 12px">P2P</a-divider>
+        <div v-for="p in diag.p2p" :key="p.kind" class="diag-row">
+          <span class="we-ellipsis" :title="p.url">{{ p.url }}</span>
+          <a-tag :color="p.ok ? 'green' : 'red'">{{ p.ok ? '通' : p.error || '不通' }}</a-tag>
+        </div>
+
+        <a-divider orientation="left" style="font-size: 12px">建议</a-divider>
+        <ul class="diag-tips">
+          <li v-for="(t, i) in diag.tips" :key="i">{{ t }}</li>
+        </ul>
+
+        <a-divider orientation="left" style="font-size: 12px">Clash / Mihomo 规则片段</a-divider>
+        <pre class="diag-code">{{ diag.snippet }}</pre>
+        <a-button size="small" @click="copySnippet">复制规则</a-button>
+      </template>
+    </a-drawer>
 
     <div class="setting__group">
       <div class="setting__label">数据</div>
@@ -165,10 +212,12 @@ import {
   getAppInfo,
   getAppNotices,
   getAppLogs,
+  getNetworkDiag,
   readMagnetProxy,
   saveMagnetProxy,
   getPendingUpdate,
   type AppInfo,
+  type NetworkDiag,
   type AppNotice,
   type PendingUpdate,
   type UpdateInfo
@@ -184,6 +233,28 @@ const downloading = ref(false);
 const exporting = ref(false);
 const proxyUrl = ref('');
 const proxySaving = ref(false);
+const diagOpen = ref(false);
+const diagLoading = ref(false);
+const diag = ref<NetworkDiag | null>(null);
+
+async function runDiag() {
+  diagOpen.value = true;
+  diagLoading.value = true;
+  const res = await getNetworkDiag();
+  diagLoading.value = false;
+  if (res.code === 0 && res.data) diag.value = res.data;
+  else message.error(res.msg || '诊断失败');
+}
+
+async function copySnippet() {
+  if (!diag.value) return;
+  try {
+    await navigator.clipboard.writeText(diag.value.snippet);
+    message.success('已复制');
+  } catch {
+    message.warning('复制失败，手动选中复制');
+  }
+}
 
 async function loadProxy() {
   const res = await readMagnetProxy();
@@ -286,6 +357,29 @@ async function onClearCache() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.diag-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--we-border-color, rgba(128, 128, 128, 0.2));
+}
+.diag-tips {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.diag-code {
+  background: var(--we-color-primary-bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0 0 8px;
 }
 .setting__row--col {
   align-items: flex-start;

@@ -621,3 +621,52 @@ export const checkTorrentHealth = (data: { infohash: string; magnet?: string }) 
 /** 批量测活：一次传当前页所有种子 */
 export const checkTorrentHealthBatch = (items: { infohash: string; magnet?: string }[], concurrency = 4) =>
   request<Record<string, TorrentHealth>>('torrent/health-batch', { items, concurrency }, false);
+
+// ======================= 规则健康度 =======================
+
+export interface RuleHealthRow {
+  ruleId: string;
+  name: string;
+  host: string;
+  contentType: number;
+  group?: string;
+  searchOk: number;
+  searchFail: number;
+  chapterOk: number;
+  chapterFail: number;
+  contentOk: number;
+  contentFail: number;
+  lastError?: string;
+  lastErrorAt?: number;
+  lastOkAt?: number;
+  lastMs?: number;
+  rate: number | null;
+  level: 'good' | 'ok' | 'bad' | 'unknown';
+}
+
+export interface RuleTestResult {
+  ruleId: string;
+  name: string;
+  keyword: string;
+  ok: boolean;
+  totalMs: number;
+  steps: { step: string; ok?: boolean; count?: number; ms?: number; error?: string }[];
+}
+
+export const getRuleHealth = () => request<RuleHealthRow[]>('diagnostics/rules', {}, false);
+export const resetRuleHealth = (ruleId: string) => request('diagnostics/reset', { ruleId }, false);
+export const testRule = (ruleId: string, keyword?: string) =>
+  request<RuleTestResult>('diagnostics/test-rule', { ruleId, keyword }, false);
+
+// ======================= 网络诊断 =======================
+
+export interface NetworkDiag {
+  proxy: string | null;
+  tunRecommended: boolean;
+  magnet: { key: string; name: string; direct?: boolean; viaProxy?: boolean; ms?: number; error?: string }[];
+  p2p: { kind: string; url: string; ok: boolean; ms: number; error?: string }[];
+  tips: string[];
+  snippet: string;
+}
+
+export const getNetworkDiag = () => request<NetworkDiag>('diagnostics/network', {}, false);

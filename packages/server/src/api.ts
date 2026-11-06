@@ -27,7 +27,8 @@ import { episodeNumber } from './episode';
 import { probeSources, resolveTorrent, searchMagnet } from './magnet';
 import { closeTorrent, openTorrent, torrentStatus } from './torrent';
 import { checkHealth, checkHealthBatch, healthTier } from './tracker';
-import { readProxyConfig, saveProxyConfig } from './proxy-config';
+import { getStat, healthLevel, recordStat, resetStat, successRate } from './stats';
+import { getProxy, readProxyConfig, saveProxyConfig } from './proxy-config';
 import { checkWatch, createWatch, markSeen, rescheduleWatch, updateWatch, watchStore } from './watch';
 import { getNotifyConfig, saveNotifyConfig, sendTo, type NotifyChannel } from './notify';
 import { aiRoutes } from './ai';
@@ -326,7 +327,17 @@ export const routes: Record<string, Handler> = {
   // ======================= 解析 =======================
   'rule-manager/search-by-rule-id': async ({ ruleId, keyword, page = 1 }) => {
     const rule = getRule(ruleId);
-    return cached(`search@${ruleId}@${page}@${md5(keyword)}`, 5 * 60 * 1000, () => new RuleManager(rule).search(keyword, page));
+    const t0 = Date.now();
+    try {
+      const list = await cached(`search@${ruleId}@${page}@${md5(keyword)}`, 5 * 60 * 1000, () =>
+        new RuleManager(rule).search(keyword, page)
+      );
+      recordStat(ruleId, 'search', true, { ms: Date.now() - t0 });
+      return list;
+    } catch (e: any) {
+      recordStat(ruleId, 'search', false, { error: e?.message || String(e) });
+      throw e;
+    }
   },
 
   'rule-manager/search-by-rule': ({ rule, keyword }) => new RuleManager(rule).search(keyword),
@@ -347,13 +358,20 @@ export const routes: Record<string, Handler> = {
 
   'rule-manager/chapter': async ({ ruleId, filePath, noCache }) => {
     const rule = getRule(ruleId);
-    const list = await cached(
-      `chapter@${ruleId}@${md5(filePath)}`,
-      HOUR,
-      () => new RuleManager(rule).getChapter(filePath),
-      !!noCache
-    );
-    return list.map((e) => ({ ...e, chapterPath: e.url }));
+    const t0 = Date.now();
+    try {
+      const list = await cached(
+        `chapter@${ruleId}@${md5(filePath)}`,
+        HOUR,
+        () => new RuleManager(rule).getChapter(filePath),
+        !!noCache
+      );
+      recordStat(ruleId, 'chapter', true, { ms: Date.now() - t0 });
+      return list.map((e) => ({ ...e, chapterPath: e.url }));
+    } catch (e: any) {
+      recordStat(ruleId, 'chapter', false, { error: e?.message || String(e) });
+      throw e;
+    }
   },
 
   'rule-manager/chapter-by-rule': async ({ rule, filePath }) =>
@@ -852,6 +870,137 @@ export const routes: Record<string, Handler> = {
 
   /** 批量按来源给的 seeders 分档（不发请求，纯计算） */
   'torrent/tier': ({ seeders }) => healthTier(Number(seeders)),
+
+  // ======================= 诊断 =======================
+  /** 网络诊断：代理、各源可达性、P2P/tracker 是否通 */
+  'diagnostics/network': async () => {
+    const proxy = (await getProxy())?.url || null;
+    const magnetSources = await probeSources();
+    // P2P 探针：试一个公共 UDP tracker 与一个 HTTP tracker
+    const p2p: { kind: string; url: string; ok: boolean; ms: number; error?: string }[] = [];
+    const dgram = await import('node:dgram');
+    const probeUdp = (host: string, port: number) =>
+      new Promise<{ ok: boolean; ms: number; error?: string }>((resolve) => {
+        const t0 = Date.now();
+        const sock = dgram.createSocket('udp4');
+        let done = false;
+        const fin = (ok: boolean, error?: string) => {
+          if (done) return;
+          done = true;
+          try {
+            sock.close();
+          } catch {
+            /* ignore */
+          }
+          resolve({ ok, ms: Date.now() - t0, error });
+        };
+        setTimeout(() => fin(false, '超时（UDP 出不去）'), 3000);
+        sock.on('error', (e) => fin(false, e.message));
+        sock.on('message', () => fin(true));
+        const req = Buffer.alloc(16);
+        req.writeUInt32BE(0x417, 0);
+        req.writeUInt32BE(0x27101980, 4);
+        req.writeUInt32BE(0, 8);
+        req.writeUInt32BE(1, 12);
+        try {
+          sock.send(req, port, host);
+        } catch (e: any) {
+          fin(false, String(e?.message || e));
+        }
+      });
+
+    const udp = await probeUdp('tracker.opentrackr.org', 1337);
+    p2p.push({ kind: 'udp-tracker', url: 'udp://tracker.opentrackr.org:1337', ...udp });
+    const httpProbe = await axios
+      .get('https://mikanime.tv/', { timeout: 4000, validateStatus: () => true })
+      .then((r) => ({ ok: r.status < 500, ms: 0 }))
+      .catch((e: any) => ({ ok: false, ms: 0, error: String(e?.message || e).slice(0, 40) }));
+    p2p.push({ kind: 'http', url: 'https://mikanime.tv/', ...httpProbe });
+
+    const snippet = [
+      '# Clash / Mihomo：让这些站点和 tracker 走代理',
+      'rules:',
+      '  - DOMAIN-SUFFIX,nyaa.si,PROXY',
+      '  - DOMAIN-SUFFIX,sukebei.nyaa.si,PROXY',
+      '  - DOMAIN-SUFFIX,dmhy.org,PROXY',
+      '  - DOMAIN-SUFFIX,acg.rip,PROXY',
+      '  - DOMAIN-SUFFIX,apibay.org,PROXY',
+      '  # P2P 需要 TUN/全局模式，HTTP 代理对 UDP 无效'
+    ].join('\n');
+
+    return {
+      proxy,
+      magnet: magnetSources.sources,
+      p2p,
+      tunRecommended: !udp.ok,
+      snippet,
+      tips: [
+        udp.ok ? 'UDP 出站正常，磁力在线播放有机会连上 peer' : 'UDP 出站被拦：磁力播放需要 TUN/全局模式，普通 HTTP 代理无效',
+        proxy ? `当前代理：${proxy}` : '没有检测到本地代理，被墙的源会失败',
+        magnetSources.sources.filter((x) => !x.direct && !x.viaProxy).length
+          ? '有源连直连和代理都不通，可能是站点本身挂了'
+          : '所有源至少有一条通路'
+      ]
+    };
+  },
+
+  /** 每条规则的健康度（成功率/最近错误/耗时） */
+  'diagnostics/rules': () =>
+    rulesStore.value.map((r) => {
+      const stat = getStat(r.id);
+      return {
+        ruleId: r.id,
+        name: r.name,
+        host: r.host,
+        contentType: r.contentType,
+        group: r.group,
+        ...stat,
+        rate: successRate(stat),
+        level: healthLevel(stat)
+      };
+    }),
+
+  /** 重置某条规则的统计 */
+  'diagnostics/reset': ({ ruleId }) => {
+    resetStat(String(ruleId || ''));
+    return true;
+  },
+
+  /** 重测一条规则：拉发现页第一组 + 搜一次自己的名字，记录耗时 */
+  'diagnostics/test-rule': async ({ ruleId, keyword }) => {
+    const rule = getRule(String(ruleId || ''));
+    const kw = String(keyword || rule.name).trim();
+    const t0 = Date.now();
+    const out: any = { ruleId: rule.id, name: rule.name, keyword: kw, steps: [] };
+    try {
+      const map = await new RuleManager(rule).discoverMap();
+      out.steps.push({ step: 'discoverMap', ok: true, count: map.length, ms: Date.now() - t0 });
+      if (map.length) {
+        const t1 = Date.now();
+        const list = await new RuleManager(rule).discover(map[0].pairs[0]?.value || '', 1);
+        out.steps.push({ step: 'discover', ok: list.length > 0, count: list.length, ms: Date.now() - t1 });
+        if (list.length) {
+          const t2 = Date.now();
+          const chapters = await new RuleManager(rule).getChapter(list[0].url);
+          out.steps.push({ step: 'chapter', ok: chapters.length > 0, count: chapters.length, ms: Date.now() - t2 });
+        }
+      }
+    } catch (e: any) {
+      out.steps.push({ step: 'error', ok: false, error: String(e?.message || e) });
+    }
+    try {
+      const t3 = Date.now();
+      const hits = await new RuleManager(rule).search(kw, 1);
+      out.steps.push({ step: 'search', ok: hits.length > 0, count: hits.length, ms: Date.now() - t3 });
+      recordStat(rule.id, 'search', hits.length > 0, { ms: Date.now() - t3, error: hits.length ? undefined : '无结果' });
+    } catch (e: any) {
+      out.steps.push({ step: 'search', ok: false, error: String(e?.message || e) });
+      recordStat(rule.id, 'search', false, { error: String(e?.message || e) });
+    }
+    out.totalMs = Date.now() - t0;
+    out.ok = out.steps.every((x: any) => x.ok !== false);
+    return out;
+  },
 
   /** 磁力源可用性 + 当前代理 */
   'magnet/sources': () => probeSources(),

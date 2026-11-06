@@ -109,6 +109,22 @@
             </template>
           </a-dropdown>
           <input ref="subFileRef" type="file" accept=".srt,.vtt,.ass,.ssa,text/plain" style="display: none" @change="onSubtitleFile" />
+          <a-select
+            v-if="qualities.length > 1"
+            :value="currentQuality === -1 ? 'auto' : currentQuality"
+            size="small"
+            style="width: 92px"
+            :options="[{ value: 'auto', label: '自动' }, ...qualities.map((q) => ({ value: q.index, label: q.label }))]"
+            @change="(v: any) => setQuality(v === 'auto' ? -1 : Number(v))"
+          />
+          <a-select
+            v-if="audioTracks.length > 1"
+            :value="currentAudio"
+            size="small"
+            style="width: 104px"
+            :options="audioTracks.map((t) => ({ value: t.id, label: t.name }))"
+            @change="(v: any) => setAudioTrack(Number(v))"
+          />
           <a-button size="small" :loading="sameLoading" @click="openSourcePicker">换源</a-button>
           <a-dropdown>
             <a-button size="small" :type="srOn ? 'primary' : 'default'">
@@ -240,6 +256,49 @@ const loading = ref(true);
 const errMsg = ref('');
 const playUrl = ref('');
 const iframeMode = ref(false);
+// ---------------- 码率 / 音轨 ----------------
+interface QualityLevel {
+  index: number;
+  height: number;
+  bitrate: number;
+  label: string;
+}
+const qualities = ref<QualityLevel[]>([]);
+const currentQuality = ref<number>(-1); // -1 = 自动
+const audioTracks = ref<{ id: number; name: string; lang?: string }[]>([]);
+const currentAudio = ref<number>(-1);
+
+function readHlsTracks() {
+  if (!hls) return;
+  const levels = (hls.levels || []).map((lv: any, i: number) => ({
+    index: i,
+    height: Number(lv.height || 0),
+    bitrate: Number(lv.bitrate || 0),
+    label: lv.height ? `${lv.height}P` : `${Math.round((lv.bitrate || 0) / 1000)}kbps`
+  }));
+  qualities.value = levels;
+  const tracks = (hls.audioTracks || []).map((t: any, i: number) => ({
+    id: i,
+    name: t.name || t.lang || `音轨 ${i + 1}`,
+    lang: t.lang
+  }));
+  audioTracks.value = tracks.length > 1 ? tracks : [];
+}
+
+function setQuality(index: number) {
+  currentQuality.value = index;
+  if (!hls) return;
+  hls.currentLevel = index;
+  message.success(index === -1 ? '已切到自动码率' : `已切到 ${qualities.value[index]?.label || index}`);
+}
+
+function setAudioTrack(id: number) {
+  currentAudio.value = id;
+  if (!hls) return;
+  hls.audioTrack = id;
+  message.success(`已切到音轨：${audioTracks.value.find((t) => t.id === id)?.name || id}`);
+}
+
 // ---------------- 磁力状态 ----------------
 const torrentInfo = ref<{ peers: number; progress: number; speed: number } | null>(null);
 let torrentTimer: number | null = null;
@@ -737,6 +796,9 @@ const next = computed(() => {
 const MEDIA_RE = /\.(m3u8|mp4|flv|webm|mkv|mov|m4v|mp3|m4a|aac|ogg|wav)(\?|#|$)/i;
 
 function destroyHls() {
+  qualities.value = [];
+  audioTracks.value = [];
+  currentQuality.value = -1;
   hls?.destroy();
   hls = null;
 }
@@ -803,6 +865,19 @@ async function play(url: string) {
           return;
         }
         errMsg.value = '视频播放失败';
+      });
+      hls.on(HlsLib.Events.MANIFEST_PARSED, () => {
+        readHlsTracks();
+        currentQuality.value = -1;
+        currentAudio.value = hls?.audioTrack ?? -1;
+      });
+      hls.on(HlsLib.Events.AUDIO_TRACKS_UPDATED, () => readHlsTracks());
+      hls.on(HlsLib.Events.LEVEL_SWITCHED, (_e, data) => {
+        if (currentQuality.value === -1) {
+          // 自动模式下把实际选中的码率反映到界面上
+          const lv = qualities.value[data.level];
+          if (lv) currentQuality.value = -2;
+        }
       });
       hls.loadSource(url);
       hls.attachMedia(video);
