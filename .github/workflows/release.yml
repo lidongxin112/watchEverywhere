@@ -84,6 +84,9 @@ jobs:
 
   release:
     needs: [build-mac, build-win]
+    # mac 任务被取消（例如 macOS 额度用尽）时，只要 win 成功也照样发 Release，
+    # 缺的 mac 包可以事后手动补传
+    if: always() && needs.build-win.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,8 +107,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/watchEverywhere-mac-arm64
-            dist/watchEverywhere-mac-x64
-            dist/watchEverywhere-win-x64.exe
+            dist/watchEverywhere-*
             dist/latest.json
           generate_release_notes: true
