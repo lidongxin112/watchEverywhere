@@ -1,6 +1,6 @@
 {
   "name": "watch-everywhere",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "type": "module",
   "description": "watchEverywhere - 基于规则的多源聚合阅读 / 观看工具（参考 any-reader 实现）",

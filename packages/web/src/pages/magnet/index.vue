@@ -11,9 +11,11 @@
       />
       <a-space wrap>
         <a-select v-model:value="category" :options="categoryOptions" style="width: 120px" size="small" @change="onCategoryChange" />
-        <a-button size="small" :loading="batchChecking" :disabled="!list.length" @click="checkAllHealth">
-          批量测活{{ batchProgress ? ` ${batchProgress.done}/${batchProgress.total}` : '' }}
-        </a-button>
+        <a-tooltip title="对当前结果的全部种子测活（没有结果会先搜一次）">
+          <a-button size="small" :loading="batchChecking" @click="checkAllHealth">
+            批量测活{{ batchProgress ? ` ${batchProgress.done}/${batchProgress.total}` : '' }}
+          </a-button>
+        </a-tooltip>
         <a-checkbox-group v-model:value="sources" :options="sourceOptions" />
       </a-space>
     </div>
@@ -243,8 +245,13 @@ const batchProgress = ref<{ done: number; total: number } | null>(null);
 
 /** 批量测活：当前页（或全部结果，最多 60 条）一次测完 */
 async function checkAllHealth() {
+  // 还没搜过就点：先按当前关键词搜一次，再测活
+  if (!list.value.length) {
+    if (!keyword.value.trim()) return message.warning('先输入关键词，或者先搜一次');
+    await search(false);
+  }
   const targets = list.value.filter((x) => x.infohash).slice(0, 60);
-  if (!targets.length) return message.warning('没有可测活的种子');
+  if (!targets.length) return message.warning('当前结果里没有可测活的种子');
   batchChecking.value = true;
   batchProgress.value = { done: 0, total: targets.length };
   const chunk = 5;
