@@ -41,29 +41,6 @@
       </div>
     </div>
 
-    <!-- 豆瓣短评 -->
-    <div v-if="douban.open" class="chapter__douban">
-      <div class="we-section-title">
-        豆瓣短评
-        <span v-if="douban.title" class="we-muted" style="font-weight: 400; font-size: 12px">
-          {{ douban.title }} {{ douban.year }}
-        </span>
-        <a-spin v-if="douban.loading" size="small" style="margin-left: 8px" />
-      </div>
-      <div v-if="douban.error" class="we-muted" style="font-size: 12px">{{ douban.error }}</div>
-      <a-empty v-else-if="!douban.loading && !douban.comments.length" :description="douban.message || '暂无短评'" />
-      <div v-else class="chapter__douban-list">
-        <div v-for="(c, i) in douban.comments" :key="i" class="chapter__douban-item">
-          <div class="chapter__douban-head">
-            <b>{{ c.author }}</b>
-            <a-rate :value="c.rating" disabled allow-half style="font-size: 12px" />
-            <span class="we-muted">{{ c.time }}</span>
-          </div>
-          <div class="chapter__douban-text">{{ c.text }}</div>
-        </div>
-      </div>
-    </div>
-
     <!-- 线路 -->
     <div v-if="chapters.roads.length > 1" class="chapter__roads">
       <span class="we-muted">线路：</span>
@@ -101,6 +78,38 @@
         {{ item.name || '未命名' }}
       </div>
     </div>
+    <!-- 豆瓣短评（可折叠，默认收起，放在选集下面，不挤占选集空间） -->
+    <div class="chapter__douban" :class="{ 'is-open': doubanExpanded }">
+      <div class="chapter__douban-bar" @click="toggleDouban">
+        <span class="chapter__douban-caret">{{ doubanExpanded ? '▾' : '▸' }}</span>
+        <span>豆瓣短评</span>
+        <span v-if="douban.comments.length" class="we-muted" style="font-size: 12px">
+          {{ douban.comments.length }} 条
+        </span>
+        <span v-if="douban.title" class="we-muted" style="font-size: 12px">{{ douban.title }} {{ douban.year }}</span>
+        <a-spin v-if="douban.loading" size="small" />
+        <div style="flex: 1"></div>
+        <span class="we-muted" style="font-size: 12px">{{ doubanExpanded ? '收起' : '展开' }}</span>
+      </div>
+      <div v-show="doubanExpanded" class="chapter__douban-body">
+        <div v-if="douban.error" class="we-muted" style="font-size: 12px">{{ douban.error }}</div>
+        <a-empty
+          v-else-if="!douban.loading && !douban.comments.length"
+          :description="douban.message || '暂无短评'"
+        />
+        <div v-else class="chapter__douban-list">
+          <div v-for="(c, i) in douban.comments" :key="i" class="chapter__douban-item">
+            <div class="chapter__douban-head">
+              <b>{{ c.author }}</b>
+              <a-rate :value="c.rating" disabled allow-half style="font-size: 12px" />
+              <span class="we-muted">{{ c.time }}</span>
+            </div>
+            <div class="chapter__douban-text">{{ c.text }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <a-modal v-model:open="reviewOpen" :title="`AI 影评 · ${info.name}`" :footer="null" width="560px">
       <div v-if="reviewLoading" class="we-center" style="min-height: 120px"><a-spin tip="AI 正在写影评..." /></div>
       <a-result v-else-if="reviewError" status="warning" :title="reviewError">
@@ -172,6 +181,13 @@ const starred = computed(() => favorites.starred(info));
 const watching = computed(() => watchStore.has(info.ruleId, info.url));
 
 // ---------------- 豆瓣短评 ----------------
+const doubanExpanded = ref(localStorage.getItem('we-douban-expanded') === '1');
+
+function toggleDouban() {
+  doubanExpanded.value = !doubanExpanded.value;
+  localStorage.setItem('we-douban-expanded', doubanExpanded.value ? '1' : '0');
+}
+
 const douban = ref<{ open: boolean; loading: boolean; error: string; message: string; title: string; year: string; comments: any[] }>(
   { open: true, loading: false, error: '', message: '', title: '', year: '', comments: [] }
 );
@@ -292,7 +308,32 @@ onMounted(() => {
 
 <style scoped>
 .chapter__douban {
-  margin-top: 18px;
+  margin-top: 14px;
+  border-radius: 10px;
+  background: var(--we-chapter-bg);
+  overflow: hidden;
+}
+.chapter__douban-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.chapter__douban-bar:hover {
+  background: var(--we-color-primary-bg);
+}
+.chapter__douban-caret {
+  width: 12px;
+  text-align: center;
+  opacity: 0.7;
+}
+.chapter__douban-body {
+  padding: 0 12px 12px;
+  max-height: 46vh;
+  overflow: auto;
 }
 .chapter__douban-list {
   display: grid;
